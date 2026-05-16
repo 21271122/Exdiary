@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}设置{% endblock %}
+{% block page_id %}settings{% endblock %}
+{% block content %}
+
+<h1>&#x2699; 设置</h1>
+<p style="color:var(--pico-muted-color)">配置 DeepSeek API 和服务参数。</p>
+
+{% if success %}
+<div class="flash flash-success">{{ success }}</div>
+{% endif %}
+{% if error %}
+<div class="flash flash-error">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/settings">
+
+  <label for="api_key">
+    <strong>DeepSeek API Key</strong>
+    <small>从 <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a> 获取</small>
+  </label>
+  <input type="password" id="api_key" name="DEEPSEEK_API_KEY"
+    placeholder="{% if masked_key %}{{ masked_key }}{% else %}sk-...{% endif %}"
+    value="{{ config.DEEPSEEK_API_KEY if not masked_key else '' }}"
+    style="font-family:monospace">
+
+  <label for="extract_model">
+    <strong>提取模型（结构化提取）</strong>
+    <small>需支持 function calling，推荐 deepseek-v4-flash</small>
+  </label>
+  <input type="text" id="extract_model" name="DEEPSEEK_MODEL"
+    value="{{ config.DEEPSEEK_MODEL or 'deepseek-v4-flash' }}">
+
+  <label for="analyze_model">
+    <strong>分析模型（跨实验分析）</strong>
+    <small>推荐推理增强模型，如 deepseek-v4-pro</small>
+  </label>
+  <input type="text" id="analyze_model" name="DEEPSEEK_ANALYZE_MODEL"
+    value="{{ config.DEEPSEEK_ANALYZE_MODEL or 'deepseek-v4-pro' }}">
+
+  <hr>
+
+  <div style="display:flex;gap:1rem;flex-wrap:wrap">
+    <div style="flex:1;min-width:120px">
+      <label for="port"><strong>端口</strong></label>
+      <input type="number" id="port" name="PORT" value="{{ config.PORT or '5000' }}" min="1024" max="65535">
+    </div>
+    <div style="flex:2;min-width:180px">
+      <label for="host"><strong>监听地址</strong></label>
+      <input type="text" id="host" name="HOST" value="{{ config.HOST or '0.0.0.0' }}">
+    </div>
+  </div>
+
+  <label style="margin-top:0.5rem">
+    <input type="checkbox" name="GUI" value="true" {% if config.GUI and config.GUI != 'false' %}checked{% endif %}>
+    <strong>启动时弹出桌面窗口</strong>
+    <small>（需安装 pywebview；未安装时自动回退到浏览器模式）</small>
+  </label>
+
+  <p style="color:var(--pico-muted-color);font-size:0.8rem;margin-top:0.5rem">
+    &#x26a0; 修改端口或监听地址后需手动重启应用才能生效。
+  </p>
+
+  <button type="submit" style="min-width:120px">&#x1f4be; 保存设置</button>
+</form>
+
+{% endblock %}

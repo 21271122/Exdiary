@@ -1,0 +1,543 @@
+{% extends "base.html" %}
+{% block title %}仪表盘{% endblock %}
+{% block page_id %}dashboard{% endblock %}
+{% block content %}
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem">
+  <h1 style="margin:0">实验记录</h1>
+  <div style="display:flex;gap:0.5rem;align-items:center">
+    <button type="button" id="btn-compare-mode" class="outline secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem" onclick="toggleCompareMode()">&#x2696; 对比模式</button>
+    <a href="/new" role="button">+ 新实验</a>
+  </div>
+</div>
+
+{# Compare bar #}
+<div id="compare-bar" style="display:none;background:var(--pico-card-background-color);border:1px solid var(--pico-primary);border-radius:8px;padding:0.6rem 1rem;margin-bottom:1rem;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+  <span id="compare-count" style="font-size:0.85rem;font-weight:500">已选择 0 个实验（请选择 2-4 个）</span>
+  <button type="button" id="btn-compare-go" style="font-size:0.85rem;padding:0.3rem 0.8rem" disabled onclick="goCompare()">&#x2696; 开始对比</button>
+</div>
+
+{# ===== 搜索与筛选面板 ===== #}
+<div class="search-panel">
+  <input type="search" id="search-input"
+         placeholder="搜索实验标题、目的、结论..."
+         autocomplete="off">
+
+  <div id="status-filters">
+    <span class="filter-chip" data-status="">全部</span>
+    <span class="filter-chip" data-status="done">done</span>
+    <span class="filter-chip" data-status="planned">planned</span>
+    <span class="filter-chip" data-status="running">running</span>
+    <span class="filter-chip" data-status="failed">failed</span>
+    <span class="filter-chip" data-status="repeated">repeated</span>
+  </div>
+
+  <details id="advanced-filters">
+    <summary>高级筛选</summary>
+    <div class="filter-grid">
+      <div>
+        <label style="font-size:0.85rem;font-weight:600">标签</label>
+        <div id="tag-filters"></div>
+      </div>
+      <div>
+        <label style="font-size:0.85rem;font-weight:600">日期范围</label>
+        <div style="display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap">
+          <input type="date" id="date-from" style="width:auto;font-size:0.85rem">
+          <span style="color:var(--pico-muted-color)">~</span>
+          <input type="date" id="date-to" style="width:auto;font-size:0.85rem">
+        </div>
+      </div>
+    </div>
+  </details>
+</div>
+
+{# ===== 实验卡片列表 ===== #}
+<div id="experiment-list">
+{% if experiments %}
+  {% for exp in experiments %}
+  {% set is_pinned = exp.id in pinned_ids %}
+  <article class="experiment-card{% if is_pinned %} pinned-card{% endif %}" data-exp-id="{{ exp.id }}" data-title="{{ exp.title or '' }}" onclick="if(_compareMode){toggleCompareCheck(this);}else{navigateToPage('/experiments/{{ exp.id }}')}">
+    <input type="checkbox" class="compare-checkbox" style="display:none;margin-right:0.4rem;transform:scale(1.2);cursor:pointer;flex-shrink:0" onclick="event.stopPropagation();toggleCompareCheck(this.closest('article'))">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem">
+      <div>
+        <strong>{{ exp.id }}</strong>
+        {% if is_pinned %}<span style="font-size:0.75rem;color:var(--pico-primary)">&#x1f4cc;</span>{% endif %}
+        {% if exp.status %}
+        <span class="status-badge status-{{ exp.status }}">{{ exp.status }}</span>
+        {% endif %}
+      </div>
+      <div style="display:flex;align-items:center;gap:0.3rem">
+        <small style="color:var(--pico-muted-color)">{{ exp.date }}</small>
+        <span style="position:relative;display:inline-flex">
+          <span class="card-menu-btn" onclick="event.stopPropagation();toggleCardMenu(this)" title="更多操作">&#x22ef;</span>
+          <div class="card-menu-dropdown" style="display:none">
+            <div class="card-menu-item pin-item" data-exp-id="{{ exp.id }}" onclick="event.stopPropagation();togglePin('{{ exp.id }}', this)">
+              {% if is_pinned %}&#x1f4cc; 取消置顶{% else %}&#x1f4cc; 置顶{% endif %}
+            </div>
+            <div class="card-menu-item fav-item" data-exp-id="{{ exp.id }}" onclick="event.stopPropagation();showFavModal('{{ exp.id }}')">&#x2b50; 收藏</div>
+          </div>
+        </span>
+      </div>
+    </div>
+    <p class="card-title" style="margin:0.5rem 0 0.3rem 0;font-weight:500">{{ exp.title or '(无标题)' }}</p>
+    {% if exp.tags %}
+    <div class="card-tags">
+      {% for tag in exp.tags %}
+      <span class="tag-pill">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+{% else %}
+<div class="empty-state" id="empty-initial">
+  <h3>还没有实验记录</h3>
+  <p>点击"+ 新实验"开始你的第一条记录</p>
+</div>
+{% endif %}
+</div>
+
+<div id="no-results" class="empty-state" style="display:none">
+  <h3>没有匹配的实验</h3>
+  <p>尝试调整关键词或筛选条件</p>
+</div>
+
+<style>
+/* Pinned card */
+.pinned-card {
+  border-left: 3px solid var(--pico-primary) !important;
+}
+
+/* Card menu */
+.card-menu-btn {
+  cursor: pointer;
+  font-size: 1.1rem;
+  color: var(--pico-muted-color);
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+.card-menu-btn:hover { background: #e0e0e0; color: #333; }
+.card-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 200;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 130px;
+  padding: 0.3rem 0;
+}
+.card-menu-item {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.card-menu-item:hover { background: #f0f0f0; }
+.card-menu-item.disabled { color: #ccc; cursor: not-allowed; pointer-events: none; }
+.card-menu-item.danger { color: #e53935; }
+.card-menu-item.danger:hover { background: #fce4e4; }
+
+.search-panel { margin-bottom: 1.5rem; }
+#search-input { margin-bottom: 0.5rem; font-size: 0.95rem; }
+
+.filter-chip {
+  display: inline-block;
+  padding: 0.15em 0.65em;
+  margin: 0.15em;
+  border-radius: 14px;
+  font-size: 0.78em;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #f0f0f0;
+  color: #555;
+  transition: all 0.15s;
+  user-select: none;
+}
+.filter-chip.active { background: var(--pico-primary); color: #fff; border-color: var(--pico-primary); }
+#status-filters { margin-bottom: 0.3rem; display: flex; gap: 0.2rem; flex-wrap: wrap; }
+
+#advanced-filters { margin-top: 0.3rem; }
+#advanced-filters summary { cursor: pointer; font-size: 0.82rem; color: var(--pico-muted-color); }
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: var(--pico-card-background-color);
+  border-radius: 8px;
+}
+@media (max-width: 576px) { .filter-grid { grid-template-columns: 1fr; } }
+#tag-filters { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+
+mark.highlight {
+  background: #fff3a0;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+</style>
+
+<script>
+// ---- Card menu (three-dot) ----
+function toggleCardMenu(btn) {
+  var dropdown = btn.nextElementSibling;
+  // Close all other dropdowns first
+  document.querySelectorAll('.card-menu-dropdown').forEach(function(d) {
+    if (d !== dropdown) d.style.display = 'none';
+  });
+  var isOpen = dropdown.style.display === 'block';
+  dropdown.style.display = isOpen ? 'none' : 'block';
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.card-menu-btn')) {
+    document.querySelectorAll('.card-menu-dropdown').forEach(function(d) {
+      d.style.display = 'none';
+    });
+  }
+});
+
+// ---- Pin / Favorite toggle ----
+function togglePin(expId, el) {
+  fetch('/api/experiments/' + expId + '/pin', {method:'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        location.reload();
+      } else {
+        alert(r.error || '操作失败');
+      }
+    });
+}
+
+// ---- Favorite collection selector modal ----
+function showFavModal(expId) {
+  // Close dropdown
+  document.querySelectorAll('.card-menu-dropdown').forEach(function(d) { d.style.display = 'none'; });
+  // Fetch collections
+  fetch('/api/list-collections')
+    .then(function(r) { return r.json(); })
+    .then(function(collections) {
+      var names = Object.keys(collections || {'默认收藏夹': []});
+      var html = '<div style="margin-bottom:0.8rem;font-weight:600;font-size:0.85rem">选择收藏夹</div>';
+      names.forEach(function(name) {
+        html += '<label style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;cursor:pointer;font-size:0.9rem">';
+        html += '<input type="radio" name="fav-collection" value="' + escHtml(name) + '"' + (name === '默认收藏夹' ? ' checked' : '') + '>';
+        html += escHtml(name) + ' <small style="color:var(--pico-muted-color)">(' + (collections[name] || []).length + ')</small>';
+        html += '</label>';
+      });
+      html += '<hr style="margin:0.5rem 0">';
+      html += '<div style="display:flex;gap:0.3rem;margin-bottom:0.5rem">';
+      html += '<input type="text" id="new-collection-name" placeholder="新收藏夹名称" style="flex:1;font-size:0.85rem">';
+      html += '<button class="outline secondary" style="font-size:0.75rem;padding:0.2rem 0.5rem" onclick="createAndFav(\'' + expId + '\')">+新建</button>';
+      html += '</div>';
+      html += '<div class="edit-modal-actions">';
+      html += '<button class="outline secondary" onclick="closeFavModal()">取消</button>';
+      html += '<button onclick="confirmFav(\'' + expId + '\')">确认收藏</button>';
+      html += '</div>';
+      document.getElementById('fav-modal-content').innerHTML = html;
+      document.getElementById('fav-modal').classList.add('active');
+    });
+}
+
+function closeFavModal() {
+  document.getElementById('fav-modal').classList.remove('active');
+}
+
+function createAndFav(expId) {
+  var inp = document.getElementById('new-collection-name');
+  if (!inp || !inp.value.trim()) return;
+  var name = inp.value.trim();
+  fetch('/api/collections', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        inp.value = '';
+        // Refresh the modal
+        showFavModal(expId);
+      } else {
+        alert(r.error || '创建失败');
+      }
+    });
+}
+
+function confirmFav(expId) {
+  var checked = document.querySelector('input[name="fav-collection"]:checked');
+  var collection = checked ? checked.value : '默认收藏夹';
+  fetch('/api/experiments/' + expId + '/favorite', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({collection: collection})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        closeFavModal();
+      } else {
+        alert(r.error || '收藏失败');
+      }
+    });
+}
+
+// ---- 搜索与筛选 ----
+var _allExperiments = [];
+var _allTags = [];
+
+fetch('/api/experiments/search')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    _allExperiments = data;
+    var tagSet = {};
+    data.forEach(function(exp) {
+      (exp.tags || []).forEach(function(t) { tagSet[t] = true; });
+    });
+    _allTags = Object.keys(tagSet).sort();
+    populateTagFilters();
+  });
+
+function populateTagFilters() {
+  var container = document.getElementById('tag-filters');
+  if (!container) return;
+  container.innerHTML = '';
+  _allTags.forEach(function(tag) {
+    var chip = document.createElement('span');
+    chip.className = 'filter-chip';
+    chip.textContent = tag;
+    chip.dataset.tag = tag;
+    chip.addEventListener('click', function() {
+      this.classList.toggle('active');
+      filterExperiments();
+    });
+    container.appendChild(chip);
+  });
+}
+
+function getActiveTags() {
+  var chips = document.querySelectorAll('#tag-filters .filter-chip.active');
+  var tags = [];
+  chips.forEach(function(c) { tags.push(c.dataset.tag.toLowerCase()); });
+  return tags;
+}
+
+function filterExperiments() {
+  var query = document.getElementById('search-input').value.trim().toLowerCase();
+  var activeChip = document.querySelector('#status-filters .filter-chip.active');
+  var statusFilter = activeChip ? activeChip.dataset.status : '';
+  var activeTags = getActiveTags();
+  var dateFrom = document.getElementById('date-from').value;
+  var dateTo = document.getElementById('date-to').value;
+
+  var anyVisible = false;
+  var cards = document.querySelectorAll('#experiment-list .experiment-card');
+  cards.forEach(function(card) {
+    var expId = card.dataset.expId;
+    var exp = null;
+    for (var i = 0; i < _allExperiments.length; i++) {
+      if (_allExperiments[i].id === expId) { exp = _allExperiments[i]; break; }
+    }
+    if (!exp) { card.style.display = ''; return; }
+
+    var visible = true;
+
+    // 关键词搜索
+    if (query && visible) {
+      var searchable = [
+        exp.title, exp.purpose, exp.conclusion,
+        (exp.sop || []).join(' '),
+        (exp.materials || []).map(function(m) { return m.name || ''; }).join(' '),
+        ((exp.observations || {}).items || []).join(' '),
+        (exp.tags || []).join(' '),
+        exp.experimenter || ''
+      ].join(' ').toLowerCase();
+      visible = searchable.indexOf(query) !== -1;
+    }
+
+    // 状态筛选
+    if (statusFilter && visible) {
+      visible = exp.status === statusFilter;
+    }
+
+    // 标签筛选
+    if (activeTags.length > 0 && visible) {
+      var expTags = (exp.tags || []).map(function(t) { return t.toLowerCase(); });
+      visible = activeTags.some(function(t) { return expTags.indexOf(t) !== -1; });
+    }
+
+    // 日期范围
+    if (dateFrom && visible) {
+      visible = exp.date && exp.date >= dateFrom;
+    }
+    if (dateTo && visible) {
+      visible = exp.date && exp.date <= dateTo;
+    }
+
+    card.style.display = visible ? '' : 'none';
+    if (visible) anyVisible = true;
+
+    // 高亮处理
+    var titleEl = card.querySelector('.card-title');
+    if (titleEl) {
+      if (visible && query) {
+        highlightElement(titleEl, query);
+      } else {
+        restoreElement(titleEl);
+      }
+    }
+  });
+
+  // 处理初始空状态和筛选无结果
+  var emptyInit = document.getElementById('empty-initial');
+  var noResults = document.getElementById('no-results');
+  if (emptyInit) emptyInit.style.display = 'none';
+  if (cards.length === 0) {
+    // 本来就没有实验，由 Jinja2 空状态处理
+  } else {
+    noResults.style.display = anyVisible ? 'none' : '';
+  }
+}
+
+function highlightElement(el, query) {
+  if (el.dataset.originalText === undefined) {
+    el.dataset.originalText = el.textContent;
+  }
+  var original = el.dataset.originalText;
+  var idx = original.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) { el.textContent = original; return; }
+  var before = original.substring(0, idx);
+  var match = original.substring(idx, idx + query.length);
+  var after = original.substring(idx + query.length);
+  el.innerHTML = escHtml(before) + '<mark class="highlight">' + escHtml(match) + '</mark>' + escHtml(after);
+}
+
+function restoreElement(el) {
+  if (el.dataset.originalText !== undefined) {
+    el.textContent = el.dataset.originalText;
+    delete el.dataset.originalText;
+  }
+}
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// 绑定事件
+document.getElementById('search-input').addEventListener('input', filterExperiments);
+document.querySelectorAll('#status-filters .filter-chip').forEach(function(chip) {
+  chip.addEventListener('click', function() {
+    var parent = this.parentElement;
+    parent.querySelectorAll('.filter-chip').forEach(function(c) { c.classList.remove('active'); });
+    if (this.dataset.status) this.classList.add('active');
+    filterExperiments();
+  });
+});
+document.getElementById('date-from').addEventListener('change', filterExperiments);
+document.getElementById('date-to').addEventListener('change', filterExperiments);
+
+// ---- Compare mode ----
+// ---- Page state save/restore for navigation history ----
+window.savePageState = function() {
+  return {scrollY: window.scrollY};
+};
+
+window.restorePageState = function(state) {
+  if (state && state.scrollY !== undefined) {
+    window.scrollTo(0, state.scrollY);
+  }
+};
+
+// ---- Compare mode ----
+var _compareMode = false;
+var _compareSelected = [];
+
+function toggleCompareMode() {
+  _compareMode = !_compareMode;
+  _compareSelected = [];
+  var btn = document.getElementById('btn-compare-mode');
+  var bar = document.getElementById('compare-bar');
+  if (_compareMode) {
+    btn.classList.add('active');
+    btn.innerHTML = '&#x2696; 退出对比';
+    bar.style.display = 'flex';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '&#x2696; 对比模式';
+    bar.style.display = 'none';
+  }
+  // Show/hide checkboxes on all cards
+  document.querySelectorAll('.experiment-card').forEach(function(card) {
+    var cb = card.querySelector('.compare-checkbox');
+    if (cb) {
+      cb.style.display = _compareMode ? '' : 'none';
+      cb.checked = false;
+    }
+    card.classList.remove('status-selected');
+  });
+  document.getElementById('compare-count').textContent = '已选择 0 个实验（请选择 2-4 个）';
+  document.getElementById('btn-compare-go').disabled = true;
+}
+
+function toggleCompareCheck(card) {
+  if (!_compareMode) return;
+  var expId = card.dataset.expId;
+  if (!expId) return;
+  var cb = card.querySelector('.compare-checkbox');
+  if (!cb) return;
+
+  var idx = _compareSelected.indexOf(expId);
+  if (idx >= 0) {
+    _compareSelected.splice(idx, 1);
+    cb.checked = false;
+    card.classList.remove('status-selected');
+  } else {
+    if (_compareSelected.length >= 4) {
+      alert('最多只能选择 4 个实验进行对比');
+      return;
+    }
+    _compareSelected.push(expId);
+    cb.checked = true;
+    card.classList.add('status-selected');
+  }
+  updateCompareBar();
+}
+
+function updateCompareBar() {
+  var n = _compareSelected.length;
+  var msg = n < 2 ? '已选择 ' + n + ' 个实验（请选择 2-4 个）' : '已选择 ' + n + ' 个实验';
+  document.getElementById('compare-count').textContent = msg;
+  document.getElementById('btn-compare-go').disabled = n < 2;
+}
+
+function goCompare() {
+  if (_compareSelected.length < 2) return;
+  navigateToPage('/compare?ids=' + _compareSelected.join(','));
+}
+</script>
+
+{# Favorites collection selector modal #}
+<div class="edit-modal-overlay" id="fav-modal">
+  <div class="edit-modal-box" style="max-width:400px">
+    <div id="fav-modal-content"></div>
+  </div>
+</div>
+
+<script>
+document.getElementById('fav-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeFavModal();
+});
+</script>
+
+{% endblock %}

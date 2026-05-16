@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Exdiary — {% block title %}实验记录{% endblock %}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@1/dist/htmx.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.min.js"></script>
+<style>
+:root {
+  --pico-font-size: 95%;
+}
+html {
+  scrollbar-gutter: stable;
+}
+.container { max-width: 600px; }
+.experiment-card {
+  margin-bottom: var(--pico-spacing);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.experiment-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+.status-badge {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 600;
+}
+.status-done { background: #d4edda; color: #155724; }
+.status-planned { background: #fff3cd; color: #856404; }
+.status-running { background: #cce5ff; color: #004085; }
+.status-failed { background: #f8d7da; color: #721c24; }
+.status-repeated { background: #e2d9f3; color: #5a3d7a; }
+.tag-pill {
+  display: inline-block;
+  padding: 0.15em 0.55em;
+  margin: 0.15em;
+  border-radius: 6px;
+  font-size: 0.75em;
+  font-weight: 500;
+  background: #e8e8e8;
+  color: #333;
+  border: 1px solid #ccc;
+}
+.status-selected { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
+.status-dim { opacity: 0.35; }
+.section-group { margin-bottom: 1.5rem; }
+.section-group summary {
+  font-weight: 600;
+  font-size: 1.05em;
+  cursor: pointer;
+  padding: 0.3em 0;
+}
+.section-group summary:hover { color: var(--pico-primary); }
+markdown-table table { width: 100%; }
+.markdown-content h2 { margin-top: 1.5rem; border-bottom: 2px solid var(--pico-primary); padding-bottom: 0.3rem; }
+.nav-actions { display: flex; gap: 0.5rem; align-items: center; }
+.empty-state { text-align: center; padding: 3rem 1rem; color: var(--pico-muted-color); }
+.loading { opacity: 0.5; pointer-events: none; }
+.flash { padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
+.flash-error { background: #f8d7da; color: #721c24; }
+.flash-success { background: #d4edda; color: #155724; }
+
+/* Status slider */
+.status-slider {
+  display: flex; gap: 3px; overflow-x: auto; scroll-snap-type: x mandatory;
+  padding: 4px 6px; max-width: 147px; border-radius: 16px; border: 2px solid #ccc;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  transition: background 0.3s, border-color 0.3s;
+}
+.status-slider::-webkit-scrollbar { display: none; }
+.status-slider .status-option {
+  scroll-snap-align: center; flex-shrink: 0; padding: 2px 10px;
+  border-radius: 12px; font-size: 0.72em; font-weight: 600; cursor: pointer;
+  border: none; transition: all 0.15s; white-space: nowrap; user-select: none;
+}
+.status-slider .status-option[data-value="planned"] { background: #fff3cd; color: #856404; }
+.status-slider .status-option[data-value="planned"].selected { background: #856404; color: #fff; }
+.status-slider .status-option[data-value="running"] { background: #cce5ff; color: #004085; }
+.status-slider .status-option[data-value="running"].selected { background: #004085; color: #fff; }
+.status-slider .status-option[data-value="done"] { background: #d4edda; color: #155724; }
+.status-slider .status-option[data-value="done"].selected { background: #155724; color: #fff; }
+.status-slider .status-option[data-value="failed"] { background: #f8d7da; color: #721c24; }
+.status-slider .status-option[data-value="failed"].selected { background: #721c24; color: #fff; }
+.status-slider .status-option[data-value="repeated"] { background: #e2d9f3; color: #5a3d7a; }
+.status-slider .status-option[data-value="repeated"].selected { background: #5a3d7a; color: #fff; }
+.status-slider .status-option:hover { filter: brightness(0.92); }
+
+/* Edit modal overlay (shared by new.html, index.html, view.html) */
+.edit-modal-overlay {
+  display: none;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5); z-index: 1000;
+  justify-content: center; align-items: center; padding: 1rem;
+}
+.edit-modal-overlay.active { display: flex; }
+.edit-modal-box {
+  background: #fff; border-radius: 12px; padding: 1.5rem;
+  max-width: 580px; width: 92%; max-height: 85vh;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+  overflow-y: auto;
+}
+.edit-modal-label { font-weight: 600; margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--pico-muted-color); }
+.edit-modal-input {
+  width: 100%; padding: 0.6rem; font-size: 0.95rem;
+  border: 2px solid #ccc; border-radius: 6px; font-family: inherit;
+  line-height: 1.6; resize: vertical; min-height: 3em;
+}
+.edit-modal-input:focus { border-color: var(--pico-primary); outline: none; box-shadow: 0 0 0 3px rgba(0,115,230,0.1); }
+.edit-modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+
+@media (max-width: 576px) {
+  .container { padding: 0.5rem; }
+  h1 { font-size: 1.4rem; }
+}
+
+/* 三线表（学术论文格式） */
+table.academic-table {
+  border-collapse: collapse;
+  width: 100%;
+  border: none;
+  border-top: 2px solid #333;
+  border-bottom: 2px solid #333;
+}
+table.academic-table thead {
+  border-bottom: 1px solid #333;
+}
+table.academic-table th,
+table.academic-table td {
+  padding: 0.4em 0.7em;
+  text-align: left;
+  border: none;
+  background: none;
+}
+table.academic-table tbody tr,
+table.academic-table tbody tr:nth-child(2n) {
+  border: none;
+  background: none;
+}
+table.academic-table td input {
+  margin: 0;
+}
+
+/* Quill rich text editor */
+.ql-editor {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  min-height: 200px;
+}
+.ql-editor.ql-blank::before {
+  color: var(--pico-muted-color);
+  font-style: normal;
+}
+.rich-notes {
+  background: var(--pico-card-background-color);
+  padding: 1rem;
+  border-radius: 6px;
+  line-height: 1.7;
+}
+.rich-notes img {
+  max-width: 100%;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+}
+
+/* ===== Fixed top navigation bar ===== */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  height: 48px;
+  background: var(--pico-background-color, #fff);
+  border-bottom: 1px solid #e0e0e0;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.topbar-inner {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--pico-spacing);
+}
+.topbar-tabs {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+}
+.topbar-tab {
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none !important;
+  color: var(--pico-muted-color, #666);
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  transition: all 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  position: relative;
+}
+.topbar-tab:hover { color: var(--pico-primary, #0071e3); background: rgba(0,115,230,0.06); }
+.topbar-tab.active {
+  color: var(--pico-primary, #0071e3);
+  font-weight: 600;
+}
+.topbar-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  background: var(--pico-primary, #0071e3);
+  border-radius: 2px;
+}
+</style>
+</head>
+<body data-page="{% block page_id %}unknown{% endblock %}">
+
+{# ===== Fixed top navigation bar ===== #}
+<nav class="topbar" id="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-tabs">
+      <a href="/" class="topbar-tab" data-nav="dashboard">仪表盘</a>
+      <a href="/api/favorites" class="topbar-tab" data-nav="favorites">收藏</a>
+      <a href="/timeline" class="topbar-tab" data-nav="timeline">时间线</a>
+      <a href="/analyze" class="topbar-tab" data-nav="analyze">分析</a>
+      <a href="/settings" class="topbar-tab" data-nav="settings">设置</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+{% block content %}{% endblock %}
+</main>
+<footer class="container" style="text-align:center;padding:2rem 0;color:var(--pico-muted-color);font-size:0.8rem">
+  Exdiary — 材料科学实验记录工具
+</footer>
+<script>
+// Global: render markdown-in-markdown content blocks
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.markdown-content').forEach(function(el) {
+    if (el.dataset.rendered) return;
+    el.innerHTML = marked.parse(el.textContent);
+    el.dataset.rendered = '1';
+  });
+});
+
+// Global: observe new content added by htmx
+if (typeof htmx !== 'undefined') {
+  htmx.on('htmx:afterSwap', function() {
+    document.querySelectorAll('.markdown-content:not([data-rendered])').forEach(function(el) {
+      el.innerHTML = marked.parse(el.textContent);
+      el.dataset.rendered = '1';
+    });
+  });
+}
+
+// ===== Navigation history system (sessionStorage) =====
+(function() {
+  var STORAGE_KEY = 'exdiary_nav';
+  var pageId = document.body.dataset.page || 'unknown';
+
+  function loadNavData() {
+    try {
+      return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '{"history":[],"states":{},"isBack":false}');
+    } catch(e) {
+      return {history: [], states: {}, isBack: false};
+    }
+  }
+
+  function saveNavData(data) {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch(e) {}
+  }
+
+  var navData = loadNavData();
+
+  // On page load: always restore page state if available
+  var state = navData.states[pageId];
+  if (state !== undefined && typeof window.restorePageState === 'function') {
+    window.restorePageState(state);
+  }
+  if (navData.isBack) {
+    navData.isBack = false;
+    saveNavData(navData);
+  }
+
+  // Highlight active nav tab
+  var activeTab = document.querySelector('.topbar-tab[data-nav="' + pageId + '"]');
+  if (activeTab) activeTab.classList.add('active');
+
+  // ---- Internal link interception ----
+  // All <a href="..."> clicks that point to internal pages are intercepted
+  // to save page state before navigating away.
+  function isInternalNav(href) {
+    if (!href || href === '#') return false;
+    if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//')) return false;
+    if (href.startsWith('javascript:')) return false;
+    if (href.startsWith('/api/')) {
+      // /api/favorites and /api/list-collections are pages, not API endpoints
+      if (href === '/api/favorites' || href === '/api/list-collections') return true;
+      return false;
+    }
+    if (href.startsWith('/uploads/')) return false;
+    return true;
+  }
+
+  function navigateTo(url) {
+    // Always save current page state before leaving
+    if (typeof window.savePageState === 'function') {
+      var state = window.savePageState();
+      if (state !== undefined) {
+        navData.states[pageId] = state;
+      }
+    }
+
+    // If target URL matches the last history entry, treat as back navigation
+    if (navData.history.length > 0) {
+      var lastEntry = navData.history[navData.history.length - 1];
+      var lastParsed = new URL(lastEntry.url);
+      var targetParsed = new URL(url, window.location.origin);
+      if (lastParsed.pathname === targetParsed.pathname && lastParsed.search === targetParsed.search) {
+        navData.history.pop();
+        navData.isBack = true;
+        saveNavData(navData);
+        window.location.href = url;
+        return;
+      }
+    }
+
+    navData.history.push({page: pageId, url: window.location.href});
+    navData.isBack = false;
+    saveNavData(navData);
+    window.location.href = url;
+  }
+
+  document.addEventListener('click', function(e) {
+    // Ignore clicks inside modals, Quill toolbars, or when user is editing
+    if (e.target.closest('.edit-modal-overlay')) return;
+    if (e.target.closest('.ql-toolbar') || e.target.closest('.ql-editor')) return;
+
+    var link = e.target.closest('a');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (!isInternalNav(href)) return;
+    // Don't intercept target=_blank or download links
+    if (link.getAttribute('target') === '_blank') return;
+    if (link.hasAttribute('download')) return;
+
+    e.preventDefault();
+    navigateTo(href);
+  });
+
+  // Expose navigateTo for use by onclick handlers (cards, buttons, etc.)
+  window.navigateToPage = function(url) {
+    navigateTo(url);
+  };
+})();
+</script>
+</body>
+</html>

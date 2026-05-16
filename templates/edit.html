@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}编辑 {{ exp_id }}{% endblock %}
+{% block page_id %}experiment-edit{% endblock %}
+{% block content %}
+
+<h1>编辑 YAML — {{ exp_id }}</h1>
+<p style="color:var(--pico-muted-color)">直接修改原始 YAML 数据，保存后返回查看页面。</p>
+
+<form method="post">
+  <textarea name="yaml_content" rows="35"
+    style="font-family:monospace;font-size:0.85rem;line-height:1.5;resize:vertical"
+  >{{ yaml_raw }}</textarea>
+  <div style="display:flex;gap:1rem;margin-top:1rem">
+    <button type="submit">&#x1f4be; 保存</button>
+    <a href="/experiments/{{ exp_id }}" role="button" class="outline secondary">取消</a>
+  </div>
+</form>
+
+{% if error %}
+<div class="flash flash-error" style="margin-top:1rem">{{ error }}</div>
+{% endif %}
+
+{% endblock %}

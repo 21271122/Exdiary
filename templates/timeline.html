@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}实验时间线{% endblock %}
+{% block page_id %}timeline{% endblock %}
+{% block content %}
+
+<h1>&#x1f4c5; 实验时间线</h1>
+<p style="color:var(--pico-muted-color)">按实验日期升序排列，点击卡片查看详情。</p>
+
+{% if experiments %}
+<div class="timeline">
+  {% for exp in experiments %}
+  <div class="timeline-node" onclick="navigateToPage('/experiments/{{ exp.id }}')">
+    <div class="timeline-dot status-{{ exp.status }}"></div>
+    <div class="timeline-card">
+      <div class="timeline-date">{{ exp.date }}</div>
+      <div class="timeline-id">{{ exp.id }}</div>
+      <div class="timeline-title">{{ exp.title or '(无标题)' }}</div>
+      <div>
+        <span class="status-badge status-{{ exp.status }}">{{ exp.status }}</span>
+        {% for tag in (exp.tags or [])[:3] %}
+        <span class="tag-pill">{{ tag }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>还没有实验记录</h3>
+  <p>点击"+ 新实验"创建第一条记录，它们将按时间顺序出现在这里</p>
+  <a href="/new" role="button" style="margin-top:1rem">+ 创建第一个实验</a>
+</div>
+{% endif %}
+
+<style>
+.timeline {
+  position: relative;
+  padding: 0.5rem 0;
+  margin-left: 1rem;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #ddd;
+  border-radius: 2px;
+}
+.timeline-node {
+  position: relative;
+  padding-left: 50px;
+  padding-bottom: 2rem;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.timeline-node:hover { transform: translateX(4px); }
+.timeline-node:last-child { padding-bottom: 0.5rem; }
+
+.timeline-dot {
+  position: absolute;
+  left: 10px;
+  top: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 3px solid #ccc;
+  background: #fff;
+  z-index: 1;
+  transition: transform 0.15s;
+}
+.timeline-node:hover .timeline-dot { transform: scale(1.3); }
+
+.timeline-dot.status-done    { background: #155724; border-color: #155724; }
+.timeline-dot.status-planned { background: #856404; border-color: #856404; }
+.timeline-dot.status-running { background: #004085; border-color: #004085; }
+.timeline-dot.status-failed  { background: #721c24; border-color: #721c24; }
+.timeline-dot.status-repeated{ background: #5a3d7a; border-color: #5a3d7a; }
+
+.timeline-card {
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-card-border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  transition: box-shadow 0.15s;
+}
+.timeline-node:hover .timeline-card {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+}
+
+.timeline-date { font-size: 0.8rem; color: var(--pico-muted-color); margin-bottom: 0.2rem; }
+.timeline-id   { font-size: 0.75rem; font-weight: 600; color: var(--pico-primary); margin-bottom: 0.2rem; }
+.timeline-title{ font-weight: 500; font-size: 1rem; margin-bottom: 0.4rem; }
+
+@media (max-width: 576px) {
+  .timeline { margin-left: 0; }
+  .timeline-node { padding-left: 40px; }
+  .timeline::before { left: 12px; }
+  .timeline-dot { left: 5px; width: 16px; height: 16px; }
+}
+</style>
+
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}实验模板库{% endblock %}
+{% block page_id %}templates{% endblock %}
+{% block content %}
+
+<h1>&#x1f4cb; 实验模板库</h1>
+<p style="color:var(--pico-muted-color)">选择一个模板快速开始实验记录。模板内容会预填入编辑器，你将占位符替换为实际数据即可提交给 AI 提取。</p>
+
+{% if templates %}
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;margin-top:1.5rem">
+  {% for t in templates %}
+  <article style="margin:0;cursor:pointer;transition:box-shadow 0.15s;display:flex;flex-direction:column"
+           onclick="navigateToPage('/new?template={{ t.id }}')"
+           onmouseenter="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.1)'"
+           onmouseleave="this.style.boxShadow='none'">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;margin-bottom:0.5rem">
+      <strong style="font-size:1.05rem">{{ t.title }}</strong>
+      <span class="tag-pill" style="white-space:nowrap">{{ t.category }}</span>
+    </div>
+    <p style="font-size:0.85rem;color:var(--pico-muted-color);flex:1;margin:0 0 0.5rem 0">{{ t.description }}</p>
+    {% if t.tags %}
+    <div style="margin-top:auto">
+      {% for tag in t.tags %}
+      <span class="tag-pill" style="font-size:0.7rem">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>还没有实验模板</h3>
+  <p>模板库为空。内置模板会在首次启动时自动创建。</p>
+</div>
+{% endif %}
+
+<div style="text-align:center;margin-top:2rem">
+  <a href="/new" role="button">跳过模板，自由书写</a>
+</div>
+
+{% endblock %}

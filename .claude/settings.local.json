@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR>=62 && NR<=70' \"D:/Projects/Exdiary-v1.2/templates/analyze.html\")",
+      "Bash(python3 *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); print\\('app.py OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('lib/storage.py', doraise=True\\); print\\('storage.py OK'\\)\")",
+      "Bash(python -c \"from lib.storage import ExperimentStore, FavoritesStore, AnalysisStore; print\\('All stores OK'\\)\")",
+      "Bash(python -c \"from lib.llm import LLMClient; print\\('LLM OK'\\)\")",
+      "Bash(python -c \"from lib.parser import parse_notes, strip_html; print\\('Parser OK'\\)\")",
+      "Bash(python -c \"from lib.analyzer import analyze_experiments; print\\('Analyzer OK'\\)\")",
+      "Bash(timeout 8 python app.py --headless)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(grep *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); py_compile.compile\\('lib/storage.py', doraise=True\\); print\\('Syntax OK'\\)\")",
+      "Bash(python *)"
+    ]
+  }
+}

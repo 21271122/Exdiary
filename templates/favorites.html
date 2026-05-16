@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}收藏夹{% endblock %}
+{% block page_id %}favorites{% endblock %}
+{% block content %}
+
+<h1>&#x2b50; 收藏夹</h1>
+
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center" id="collection-tabs">
+  {% for name, ids in collections.items() %}
+  <span class="collection-tab {% if loop.first %}active{% endif %}" data-collection="{{ name }}" onclick="switchCollection('{{ name }}')">
+    {{ name }}
+    <small style="opacity:0.6">({{ ids|length }})</small>
+  </span>
+  {% endfor %}
+  <button class="outline secondary" style="font-size:0.75rem;padding:0.2rem 0.6rem" onclick="showNewCollection()">+ 新建收藏夹</button>
+</div>
+
+<div id="collection-search" style="margin-bottom:0.8rem">
+  <input type="search" id="fav-search" placeholder="在收藏夹内搜索..." autocomplete="off" style="font-size:0.9rem">
+</div>
+
+<div id="favorites-list">
+  <div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">加载中...</div>
+</div>
+
+<style>
+.collection-tab {
+  display: inline-block;
+  padding: 0.3em 0.8em;
+  border-radius: 16px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+  transition: all 0.15s;
+  user-select: none;
+}
+.collection-tab.active { background: var(--pico-primary); color: #fff; border-color: var(--pico-primary); }
+.collection-tab small { margin-left: 2px; }
+
+.fav-card {
+  position: relative;
+}
+.fav-card .remove-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
+  font-size: 0.75rem;
+  color: #999;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  z-index: 2;
+}
+.fav-card .remove-btn:hover { color: #e53935; background: #fce4e4; }
+</style>
+
+<script>
+// ---- Page state save/restore for navigation history ----
+window.savePageState = function() {
+  return {scrollY: window.scrollY};
+};
+
+window.restorePageState = function(state) {
+  if (state && state.scrollY !== undefined) {
+    window.scrollTo(0, state.scrollY);
+  }
+};
+
+var _currentCollection = '{{ collections.keys()|list|first|default("默认收藏夹") }}';
+var _allExperiments = [];
+var _collections = {{ collections | tojson | safe }};
+
+// Load all experiments
+fetch('/api/experiments/search')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    _allExperiments = data;
+    switchCollection(_currentCollection);
+  });
+
+function switchCollection(name) {
+  _currentCollection = name;
+  document.querySelectorAll('.collection-tab').forEach(function(tab) {
+    tab.classList.toggle('active', tab.dataset.collection === name);
+  });
+  renderFavorites();
+}
+
+function renderFavorites() {
+  var ids = _collections[_currentCollection] || [];
+  var container = document.getElementById('favorites-list');
+  var query = document.getElementById('fav-search').value.trim().toLowerCase();
+
+  var exps = ids.map(function(id) {
+    for (var i = 0; i < _allExperiments.length; i++) {
+      if (_allExperiments[i].id === id) return _allExperiments[i];
+    }
+    return null;
+  }).filter(function(e) { return e !== null; });
+
+  // Search filter
+  if (query) {
+    exps = exps.filter(function(exp) {
+      var searchable = [
+        exp.title, exp.purpose, exp.conclusion,
+        (exp.tags || []).join(' ')
+      ].join(' ').toLowerCase();
+      return searchable.indexOf(query) !== -1;
+    });
+  }
+
+  if (exps.length === 0) {
+    container.innerHTML = '<div class="empty-state">' +
+      (ids.length === 0 ? '<p>此收藏夹为空</p>' : '<p>没有匹配的实验</p>') +
+      '</div>';
+    return;
+  }
+
+  var html = '';
+  exps.forEach(function(exp) {
+    html += '<article class="experiment-card fav-card" data-exp-id="' + escHtml(exp.id) + '" onclick="event.target.closest(\'.remove-btn\') || navigateToPage(\'/experiments/' + escHtml(exp.id) + '\')">';
+    html += '<button class="remove-btn" title="移出收藏夹" onclick="removeFromCollection(\'' + escHtml(exp.id) + '\')">&#x2716;</button>';
+    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem">';
+    html += '<div><strong>' + escHtml(exp.id) + '</strong>';
+    if (exp.status) {
+      html += ' <span class="status-badge status-' + (exp.status || 'planned') + '">' + (exp.status || 'planned') + '</span>';
+    }
+    html += '</div>';
+    html += '<small style="color:var(--pico-muted-color)">' + escHtml(exp.date || '') + '</small>';
+    html += '</div>';
+    html += '<p style="margin:0.5rem 0 0.3rem 0;font-weight:500">' + escHtml(exp.title || '(无标题)') + '</p>';
+    if (exp.tags && exp.tags.length) {
+      html += '<div>';
+      exp.tags.forEach(function(tag) {
+        html += '<span class="tag-pill">' + escHtml(tag) + '</span>';
+      });
+      html += '</div>';
+    }
+    html += '</article>';
+  });
+  container.innerHTML = html;
+}
+
+function removeFromCollection(expId) {
+  var coll = encodeURIComponent(_currentCollection);
+  fetch('/api/experiments/' + expId + '/favorite', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({collection: _currentCollection})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        _collections[_currentCollection] = (_collections[_currentCollection] || []).filter(function(id) { return id !== expId; });
+        // Update tab count
+        var tab = document.querySelector('.collection-tab[data-collection="' + _currentCollection + '"] small');
+        if (tab) tab.textContent = '(' + _collections[_currentCollection].length + ')';
+        renderFavorites();
+      }
+    });
+}
+
+function showNewCollection() {
+  var name = prompt('输入新收藏夹名称:');
+  if (!name || !name.trim()) return;
+  name = name.trim();
+  fetch('/api/collections', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (r.ok) {
+        _collections[name] = [];
+        // Add new tab
+        var tabs = document.getElementById('collection-tabs');
+        var newTab = document.createElement('span');
+        newTab.className = 'collection-tab';
+        newTab.dataset.collection = name;
+        newTab.innerHTML = escHtml(name) + ' <small style="opacity:0.6">(0)</small>';
+        newTab.onclick = function() { switchCollection(name); };
+        tabs.insertBefore(newTab, tabs.lastElementChild);
+        switchCollection(name);
+      } else {
+        alert(r.error || '创建失败');
+      }
+    });
+}
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+document.getElementById('fav-search').addEventListener('input', renderFavorites);
+</script>
+
+{% endblock %}
