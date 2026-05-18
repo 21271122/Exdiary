@@ -446,8 +446,12 @@ function restoreAgentState() {
     var placeholder = container.querySelector('div[style]');
     if (placeholder) placeholder.remove();
     (_agentState.history || []).forEach(function(entry) {
-      var role = entry.role === 'agent' ? 'agent' : 'user';
-      appendChat(role, entry.content);
+      if (entry.role === 'user') {
+        appendChat('user', entry.content);
+      } else if (entry.role === 'assistant') {
+        if (entry.content) appendChat('agent', entry.content);
+      }
+      // system / tool 消息不渲染到聊天 UI
     });
     updateProgress(_agentState.completeness || 0, _agentState.turn_count || 0);
     return true;
@@ -492,7 +496,7 @@ async function startAgent() {
       return;
     }
     _agentState = data.state;
-    appendChat('agent', data.reply);
+    appendChat('agent', data.message);
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
@@ -526,40 +530,22 @@ async function sendMessage() {
       return;
     }
     _agentState = data.state;
-    appendChat('agent', data.reply);
+    appendChat('agent', data.message);
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
 
-    if (data.should_extract) {
-      await doAgentExtract();
+    // v2: extract signal comes directly in the message response
+    if (data.type === 'extract' && data.preview) {
+      _extractedData = data.preview;
+      _extractedData.original_notes = data.notes || '';
+      document.getElementById('chat-panel').style.display = 'none';
+      showPreview(data.preview);
     }
   } catch(e) {
     _sending = false;
     document.getElementById('btn-send').disabled = false;
     appendChat('agent', '网络错误: ' + e.message);
-  }
-}
-
-async function doAgentExtract() {
-  appendChat('agent', '正在生成实验记录...');
-  try {
-    var r = await fetch('/api/agent/extract', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({state: _agentState})
-    });
-    var data = await r.json();
-    if (data.ok) {
-      _extractedData = data.data;
-      _extractedData.original_notes = data.notes;
-      document.getElementById('chat-panel').style.display = 'none';
-      showPreview(data.data);
-    } else {
-      appendChat('agent', '提取失败: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    appendChat('agent', '提取失败: ' + e.message);
   }
 }
 

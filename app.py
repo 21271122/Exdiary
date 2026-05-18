@@ -9,7 +9,7 @@ from lib.storage import ExperimentStore, FavoritesStore, AnalysisStore
 from lib.llm import LLMClient
 from lib.parser import parse_notes, strip_html
 from lib.analyzer import analyze_experiments
-from lib.agent import ExperimentAgent, AgentConfig, AgentState, TurnController
+from lib.agent_v2 import AgentLoop
 
 BASE_DIR = Path(__file__).parent
 SETTINGS_PATH = BASE_DIR / "config.yaml"
@@ -824,7 +824,7 @@ def compare_experiments():
 
 
 # ---------------------------------------------------------------------------
-# Agent API — conversational experiment recording
+# Agent API v2 — conversational experiment recording (tool-calling)
 # ---------------------------------------------------------------------------
 
 @app.route("/api/agent/start", methods=["POST"])
@@ -834,23 +834,20 @@ def api_agent_start():
     if not llm:
         return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
 
-    config = AgentConfig()
-    # 设置 debug=True 启用调试日志，输出到 experiments/_debug/
-    config.debug = True
-    agent = ExperimentAgent(llm, store, config)
-    reply = agent.start()
+    agent = AgentLoop(llm, store)
+    result = agent.run("")
     return jsonify({
         "ok": True,
-        "state": agent.state.state_to_dict(),
-        "reply": reply,
-        "stage": agent.state.stage,
-        "completeness": agent.state.completeness,
+        "state": agent.state_to_dict(),
+        "type": result["type"],
+        "message": result.get("message", ""),
+        "context": result.get("context", {}),
     })
 
 
 @app.route("/api/agent/message", methods=["POST"])
 def api_agent_message():
-    """处理用户消息，返回 Agent 回复和更新后的状态。"""
+    """处理用户消息，返回 Agent 回复。检测到提取信号时自动执行提取。"""
     llm = get_agent_llm()
     if not llm:
         return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
@@ -866,70 +863,32 @@ def api_agent_message():
     if not state_dict:
         return jsonify({"ok": False, "error": "缺少 state"}), 400
 
-    # 从 state dict 重建 Agent 实例
-    config = AgentConfig()
-    config.debug = True  # 取消注释以启用调试日志
-    agent = ExperimentAgent(llm, store, config)
-    agent.state = AgentState.from_dict(state_dict)
-    agent.turn_controller = TurnController(agent.config)
+    # 从 state dict 重建 AgentLoop
+    agent = AgentLoop.from_dict(llm, store, state_dict)
+    result = agent.run(user_message)
 
-    result = agent.process_message(user_message)
+    # 如果是提取信号，执行结构化提取
+    if result["type"] == "extract":
+        context = result.get("context", {})
+        notes = _build_notes_from_context(context)
+        preview = _extract_or_fallback(notes, context, agent)
 
-    return jsonify({
-        "ok": True,
-        "state": agent.state.state_to_dict(),
-        "reply": result["reply"],
-        "stage": result["stage"],
-        "completeness": result["completeness"],
-        "should_extract": result["should_extract"],
-    })
-
-
-@app.route("/api/agent/extract", methods=["POST"])
-def api_agent_extract():
-    """执行结构化提取：生成自然语言描述 → parse_notes → 返回预览数据。"""
-    llm = get_agent_llm()
-    if not llm:
-        return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
-
-    data = request.get_json()
-    state_dict = data.get("state") if data else None
-    if not state_dict:
-        return jsonify({"ok": False, "error": "缺少 state"}), 400
-
-    # 从 state dict 重建 Agent 实例
-    config = AgentConfig()
-    agent = ExperimentAgent(llm, store, config)
-    agent.state = AgentState.from_dict(state_dict)
-    agent.turn_controller = TurnController(agent.config)
-
-    # 如果还未生成 final_notes，调用 _stage_extract
-    if not agent.state.final_notes:
-        agent._stage_extract()
-
-    notes = agent.state.final_notes
-    if not notes:
-        return jsonify({"ok": False, "error": "未能生成实验描述"}), 500
-
-    # 调用现有的 parse_notes 做结构化提取
-    extract_llm = get_extract_llm()
-    if not extract_llm:
-        return jsonify({"ok": False, "error": "未配置提取模型"}), 500
-
-    try:
-        result = parse_notes(notes, extract_llm)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"AI 提取失败: {str(e)}"}), 500
-
-    result["original_notes"] = notes
-    result["id"] = store.next_id()
-    # 继承 Agent 已解析的引用
-    result["references"] = list(agent.state.references)
+        agent.save_final_messages()
+        return jsonify({
+            "ok": True,
+            "type": "extract",
+            "state": agent.state_to_dict(),
+            "message": agent.history[-1].get("content", "实验记录已生成。"),
+            "preview": preview,
+            "notes": notes,
+        })
 
     return jsonify({
         "ok": True,
-        "data": result,
-        "notes": notes,
+        "state": agent.state_to_dict(),
+        "type": result["type"],
+        "message": result.get("message", ""),
+        "context": result.get("context", {}),
     })
 
 
@@ -937,6 +896,89 @@ def api_agent_extract():
 def api_agent_confirm():
     """确认保存 Agent 生成的实验记录。委托到现有保存逻辑。"""
     return api_parse_confirm()
+
+
+# -- 辅助函数 --
+
+def _build_notes_from_context(context: dict) -> str:
+    """从 context 生成自然语言实验描述（Python 模板，不调 LLM）。"""
+    parts = []
+    if context.get("title"):
+        parts.append(f"实验标题: {context['title']}")
+    if context.get("purpose"):
+        parts.append(f"实验目的: {context['purpose']}")
+    materials = context.get("materials", [])
+    if materials:
+        lines = ["材料与试剂:"]
+        for m in materials:
+            if isinstance(m, dict):
+                name = m.get("name", "")
+                purity = f", 纯度 {m['purity']}" if m.get("purity") else ""
+                vendor = f", {m['vendor']}" if m.get("vendor") else ""
+                amount = f", {m['amount']}" if m.get("amount") else ""
+                lines.append(f"  - {name}{purity}{vendor}{amount}")
+        parts.append("\n".join(lines))
+    sop = context.get("sop", [])
+    if sop:
+        lines = ["实验步骤:"]
+        for i, s in enumerate(sop, 1):
+            lines.append(f"  {i}. {s}")
+        parts.append("\n".join(lines))
+    params = context.get("process_parameters", [])
+    if params:
+        lines = ["过程参数:"]
+        for p in params:
+            if isinstance(p, dict):
+                lines.append(f"  - {p.get('parameter', '')}: {p.get('setpoint', '')}")
+        parts.append("\n".join(lines))
+    results = context.get("results", {})
+    if isinstance(results, dict):
+        if results.get("qualitative"):
+            parts.append(f"定性结果: {results['qualitative']}")
+        kd = results.get("key_data", [])
+        if kd:
+            lines = ["关键数据:"]
+            for k in kd:
+                if isinstance(k, dict):
+                    lines.append(f"  - {k.get('metric', '')}: {k.get('value', '')}")
+            parts.append("\n".join(lines))
+    if context.get("conclusion"):
+        parts.append(f"结论: {context['conclusion']}")
+    if context.get("next_steps"):
+        parts.append("下一步: " + "; ".join(str(s) for s in context["next_steps"]))
+    return "\n\n".join(parts) if parts else "（无实验描述）"
+
+
+def _extract_or_fallback(notes: str, context: dict, agent: AgentLoop) -> dict:
+    """尝试 LLM 提取 → 失败则从 context 确定性构造预览数据。"""
+    extract_llm = get_extract_llm()
+    if extract_llm:
+        try:
+            result = parse_notes(notes, extract_llm)
+            result["original_notes"] = notes
+            result["id"] = store.next_id()
+            result["references"] = list(agent.references)
+            return result
+        except Exception:
+            pass
+
+    # 回退：从 context 确定性构造
+    return {
+        "id": store.next_id(),
+        "title": context.get("title", ""),
+        "purpose": context.get("purpose", ""),
+        "materials": context.get("materials", []),
+        "sop": context.get("sop", []),
+        "process_parameters": context.get("process_parameters", []),
+        "observations": context.get("observations", {"no_anomalies": True, "items": []}),
+        "results": context.get("results", {}),
+        "conclusion": context.get("conclusion", ""),
+        "next_steps": context.get("next_steps", []),
+        "tags": context.get("tags", []),
+        "status": context.get("status", "planned"),
+        "original_notes": notes,
+        "references": list(agent.references),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1145,6 +1187,10 @@ def settings_page():
 if __name__ == "__main__":
     import sys
     import threading
+
+    # 修复 Windows 控制台中文乱码（方格问题）
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
 
     port = int(config.get("PORT", 5000))
     host = config.get("HOST", "0.0.0.0")
