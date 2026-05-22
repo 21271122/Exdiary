@@ -19,8 +19,11 @@ TOOL_LOAD_REFERENCE = {
         "name": "load_reference",
         "description": (
             "加载引用实验的完整数据（SOP、参数、结果、结论等）。"
-            "用户说'跟EXP-xxx一样''复现EXP-xxx'或模糊描述'上次的ZnO实验'时调用。"
-            "结果写回messages，你可以据此判断哪些字段可直接继承。"
+            "仅接受 EXP ID 格式（如 EXP-2026-003）。"
+            "用户说'跟003一样'时，请自行补全为 EXP-2026-003 后调用。"
+            "模糊描述（如'上次的ZnO实验'）请用 search_experiments。"
+            "结果写回messages，你可据此判断哪些字段可直接继承。"
+            "已加载过的实验无需重复调用——数据已在 messages 中。"
         ),
         "parameters": {
             "type": "object",
@@ -28,7 +31,7 @@ TOOL_LOAD_REFERENCE = {
                 "refs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "实验编号（如EXP-2026-003）或模糊描述（如'上次的ZnO实验'）",
+                    "description": "实验编号（EXP-YYYY-NNN 格式）。不是模糊描述。",
                 }
             },
             "required": ["refs"],
@@ -41,8 +44,13 @@ TOOL_SEARCH_EXPERIMENTS = {
     "function": {
         "name": "search_experiments",
         "description": (
-            "在历史实验库中模糊搜索。当用户用自然语言描述历史实验但未给编号时调用。"
-            "返回候选列表。如用户随后确认了某个候选，再调 load_reference 加载。"
+            "在历史实验库中搜索。处理各种自然语言描述：\n"
+            "- 时间指代：'上周的''最近的''上个月的'\n"
+            "- 人员指代：'老张做的''我上次做的'\n"
+            "- 状态指代：'失败的那个''成功的那个'\n"
+            "- 材料指代：'做ZnO的那个''用了P25的'\n"
+            "- 性能指代：'降解率最高的'\n"
+            "返回候选列表。如用户确认候选，再调 load_reference 加载完整数据。"
         ),
         "parameters": {
             "type": "object",
@@ -127,11 +135,30 @@ TOOL_ASK_USER = {
     },
 }
 
+TOOL_GENERATE_RECORD = {
+    "type": "function",
+    "function": {
+        "name": "generate_record",
+        "description": (
+            "生成实验记录草稿。当你判断实验信息已收集完毕、核心字段（目的、"
+            "材料、步骤/参数、结果/结论）已填充时调用。调用后系统生成结构化"
+            "记录并在前端展示预览面板，用户确认后保存。不要只输出纯文本等待——"
+            "调用本工具是生成记录的唯一途径。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+}
+
 TOOLS_OPENAI_FORMAT = [
     TOOL_LOAD_REFERENCE,
     TOOL_SEARCH_EXPERIMENTS,
     TOOL_UPDATE_SCHEMA,
     TOOL_ASK_USER,
+    TOOL_GENERATE_RECORD,
 ]
 
 # ============================================================================
@@ -144,10 +171,14 @@ SYSTEM_PROMPT = """\
 
 ## 工作方式
 
-你有 4 个工具。收到用户消息后:
+你有 5 个工具。收到用户消息后:
 
-1. 如果用户引用了历史实验 → 先调 load_reference（或 search_experiments 搜索）。
-   不确定的引用先向用户确认，不要盲猜。
+1. 如果用户引用了历史实验：
+   - 用户给了明确编号（如"EXP-003""003"）→ 直接拼成 'EXP-2026-xxx' 调 load_reference
+   - 用户用自然语言描述（如"上周的ZnO实验""老张做钙钛矿那次"）→ 调 search_experiments
+   - 搜索结果不明确时，把候选展示给用户确认，不要盲猜直接加载
+   - load_reference 只接受 EXP ID 格式，不接受自然语言。调用前请自行将缩写补全为完整编号
+   - 加载过的实验无需重复调用 load_reference（数据已在 messages 中）
 
 2. 因为每轮可能有多个对话来回，对于用户提供的信息，调用 update_schema 写入。
    如加载了引用且用户说"完全一样"，将引用实验的匹配字段整批写入。
@@ -158,13 +189,13 @@ SYSTEM_PROMPT = """\
    追问看两点: Schema 状态中的缺失字段 + 各类实验的优先级(见下方)。
    自己决定问什么、问几个。不要一次问太多。
 
-4. 如果 Schema 状态显示关键字段基本齐备 → 输出自然语言文本
-   （如"差不多了，我来整理一下"），系统检测到你不再调工具
-   且核心字段已填，自动触发提取。
+4. 如果 Schema 状态显示关键字段基本齐备 → **调用 generate_record 工具**
+   来生成最终记录。调用这个工具是生成实验记录的唯一途径。
+   不要只输出纯文本等待系统自动处理——你必须主动调用工具。
 
-4a. 如果用户主动说"够了""直接生成""就这样"等 → 同样先判断
-   核心字段是否已填。已填则输出确认文本并结束。未填则
-   追问最后1-2个关键项，不要盲目结束生成残缺记录。
+4a. 如果用户主动说"够了""直接生成""就这样"等 → 判断核心字段
+   是否已填。已填则调用 generate_record 生成记录。未填则
+   追问最后1-2个关键项，不要盲目生成残缺记录。
 
 ## 实验 Schema（16 字段）
 
@@ -324,6 +355,31 @@ def _brief(val) -> str:
     return "有" if val else "空"
 
 
+def _fallback_preview(loop: "AgentLoop") -> dict:
+    """确定性回退：从 context 直接构造预览数据，不调 LLM"""
+    ctx = loop.context
+    return {
+        "id": loop.store.next_id(),
+        "title": ctx.get("title", ""),
+        "purpose": ctx.get("purpose", ""),
+        "materials": ctx.get("materials", []),
+        "sop": ctx.get("sop", []),
+        "process_parameters": ctx.get("process_parameters", []),
+        "observations": ctx.get("observations", {"no_anomalies": True, "items": []}),
+        "results": ctx.get("results", {}),
+        "characterization": ctx.get("characterization", []),
+        "equipment": ctx.get("equipment", []),
+        "conclusion": ctx.get("conclusion", ""),
+        "next_steps": ctx.get("next_steps", []),
+        "tags": ctx.get("tags", []),
+        "status": ctx.get("status", "planned"),
+        "date": ctx.get("date", ""),
+        "experimenter": ctx.get("experimenter", ""),
+        "original_notes": "",
+        "references": list(loop.references),
+    }
+
+
 # ============================================================================
 # Step 1.2: ToolExecutor
 # ============================================================================
@@ -338,6 +394,7 @@ class ToolExecutor:
             "search_experiments": self._search_experiments,
             "update_schema": self._update_schema,
             "ask_user": self._ask_user,
+            "generate_record": self._generate_record,
         }
 
     # -- 参数校验入口 --
@@ -376,41 +433,63 @@ class ToolExecutor:
     def _ask_user(self, args: dict, loop: "AgentLoop") -> dict:
         return {"status": "asked"}
 
+    # -- generate_record --
+
+    def _generate_record(self, args: dict, loop: "AgentLoop") -> dict:
+        notes = loop._build_notes_from_context()
+        try:
+            from lib.parser import parse_notes
+            result = parse_notes(notes, loop.llm)
+            result["original_notes"] = notes
+            result["id"] = loop.store.next_id()
+            result["references"] = list(loop.references)
+            loop._generated_preview = result
+            loop._generated_notes = notes
+            return {"status": "generated", "id": result["id"],
+                    "title": result.get("title", ""),
+                    "fields_count": sum(1 for v in result.values() if v)}
+        except Exception:
+            preview = _fallback_preview(loop)
+            loop._generated_preview = preview
+            loop._generated_notes = notes
+            return {"status": "generated",
+                    "id": preview["id"],
+                    "title": preview.get("title", ""),
+                    "note": "使用了确定性回退，部分字段可能需手动补全"}
+
     # -- Step 1.5: load_reference --
 
     def _load_reference(self, args: dict, loop: "AgentLoop") -> dict:
-        """加载引用实验。先试 EXP ID 直接加载，再试模糊搜索。"""
+        """加载引用实验。仅处理明确的 EXP ID，模糊描述请用 search_experiments。"""
         results = {}
         for ref in args.get("refs", []):
             ref = str(ref).strip()
             if not ref:
                 continue
 
-            # 第一步：正则匹配 EXP ID
             m = re.match(r"^(?:@)?(EXP-\d{4}-\d{3})$", ref, re.IGNORECASE)
-            if m:
-                exp_id = m.group(1).upper()
-                exp = self.store.load(exp_id)
-                if exp:
-                    loop.references.append(exp_id)
-                    results[exp_id] = self._summarize_exp(exp)
-                    continue
+            if not m:
+                results[ref] = {"error": "不是实验编号格式",
+                                "message": f"'{ref}'不是EXP编号。如用户给了模糊描述（如'上次的ZnO实验'），请使用 search_experiments 搜索。"}
+                continue
 
-            # 第二步：模糊搜索
-            candidates = self._fuzzy_search(ref, loop)
-            if candidates:
-                top = candidates[0]
-                exp = self.store.load(top["id"])
-                if exp:
-                    loop.references.append(top["id"])
-                    results[top["id"]] = self._summarize_exp(exp)
+            exp_id = m.group(1).upper()
+            if exp_id in loop.references:
+                results[exp_id] = {"status": "already_loaded",
+                                   "note": "该实验数据已在对话中，无需重复加载"}
+                continue
+            exp = self.store.load(exp_id)
+            if exp:
+                loop.references.append(exp_id)
+                results[exp_id] = self._summarize_exp(exp)
             else:
-                results[ref] = {"error": "未找到匹配实验"}
+                results[exp_id] = {"error": "实验不存在",
+                                   "message": f"未找到 {exp_id}，请检查编号或使用 search_experiments 搜索。"}
 
         # 从首个加载的实验推断 experiment_type
         if results and loop.experiment_type == "other":
             for key, val in results.items():
-                if "tags" in val and val["tags"]:
+                if isinstance(val, dict) and "tags" in val and val.get("tags"):
                     for tag in val["tags"]:
                         if tag in ("photocatalysis", "hydrothermal", "sol-gel",
                                    "spin-coating", "ball-milling",
@@ -450,11 +529,86 @@ class ToolExecutor:
     # -- Step 1.6: search_experiments --
 
     def _search_experiments(self, args: dict, loop: "AgentLoop") -> dict:
-        candidates = self._fuzzy_search(args.get("query", ""), loop)
-        return {"candidates": candidates[:5]}
+        query = args.get("query", "").strip()
+        if not query or len(query) < 2:
+            return {"candidates": []}
+
+        # 第一步：关键词粗筛
+        keyword_results = self._fuzzy_search(query, loop)
+
+        # 如果是纯 ID/编号 查询（"003", "EXP-2026-003"），关键词就够了
+        if re.match(r'^[\w-]*\d[\w-]*$', query) or re.match(r'^(?:@)?EXP-', query, re.IGNORECASE):
+            return {"candidates": keyword_results[:5]}
+
+        # 第二步：自然语言查询 → LLM 语义搜索
+        if not keyword_results or keyword_results[0]["score"] < 0.3:
+            try:
+                llm_results = self._llm_semantic_search(query, loop)
+                if llm_results:
+                    return {"candidates": llm_results[:5]}
+            except Exception:
+                pass
+
+        return {"candidates": keyword_results[:5]}
+
+    def _llm_semantic_search(self, query: str, loop: "AgentLoop") -> list[dict]:
+        """LLM 语义搜索：独立 API 调用，不污染 Agent 上下文。处理自然语言如'上周一的''老张做的''失败的那个'。"""
+        all_exps = loop.store.list_all_full()
+        if not all_exps:
+            return []
+
+        # 构造极简摘要（每实验 1-2 行，控制 token 消耗）
+        lines = []
+        for e in all_exps:
+            exp_id = e.get("id", "")
+            title = (e.get("title") or "(无标题)")[:40]
+            date = e.get("date") or ""
+            experimenter = e.get("experimenter") or "佚名"
+            status = e.get("status", "")
+            status_cn = {"planned": "计划中", "running": "进行中", "done": "已完成",
+                         "failed": "失败", "repeated": "重复"}.get(status, status)
+            conclusion = (e.get("conclusion") or "")[:40]
+            tags = ", ".join(e.get("tags", [])[:4])
+            lines.append(
+                f"{exp_id} | {title} | {date} | {experimenter} | {status_cn} | {tags} | {conclusion}"
+            )
+
+        exp_list_text = "\n".join(lines)
+        system_prompt = (
+            "你是实验记录搜索引擎。根据用户的自然语言描述，从实验列表中找出最匹配的实验。\n"
+            "理解以下类型的查询：\n"
+            "- 时间指代：'上周一'='最近一周'，'上个月'='30天前'，'最近'=按日期排序\n"
+            "- 人员指代：'老张'='experimenter含张'，'我做的'=忽略\n"
+            "- 状态指代：'失败的那个'='status=failed'，'成功的'='status=done且results有值'\n"
+            "- 材料指代：'ZnO那个'='材料含ZnO'\n"
+            "- 性能指代：'降解率最高的'='results中降解率数值最大的'\n\n"
+            "严格返回 JSON 数组（不要包含在 markdown 代码块中）：\n"
+            '[{"id": "EXP-2026-xxx", "score": 0.95, "reason": "原因"}, ...]\n'
+            "按匹配度降序排列，最多返回5个。score 0-1，0.3以下不要返回。\n"
+            "如果没有匹配的实验，返回空数组 []。"
+        )
+        user_prompt = f"实验列表：\n{exp_list_text}\n\n用户查询：{query}\n\n请返回最匹配的实验 ID 列表（JSON 数组）："
+
+        raw = loop.llm.analyze(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.1)
+
+        # 容错解析
+        try:
+            results = json.loads(raw.strip())
+            if isinstance(results, list):
+                return results[:5]
+        except json.JSONDecodeError:
+            m = re.search(r'\[[\s\S]*\]', raw)
+            if m:
+                try:
+                    results = json.loads(m.group(0))
+                    if isinstance(results, list):
+                        return results[:5]
+                except json.JSONDecodeError:
+                    pass
+        return []
 
     def _fuzzy_search(self, query: str, loop: "AgentLoop") -> list[dict]:
-        """本地关键词搜索"""
+        """本地关键词搜索（含实验 ID）"""
         if not query or len(query) < 2:
             return []
         all_exps = loop.store.list_all_full()
@@ -464,6 +618,7 @@ class ToolExecutor:
 
         for exp in all_exps:
             score = 0.0
+            exp_id = (exp.get("id") or "").lower()
             title = (exp.get("title") or "").lower()
             tags = " ".join(exp.get("tags") or []).lower()
             purpose = (exp.get("purpose") or "")[:200].lower()
@@ -471,7 +626,7 @@ class ToolExecutor:
                 m.get("name", "") for m in (exp.get("materials") or [])
                 if isinstance(m, dict)
             ).lower()
-            searchable = f"{title} {tags} {purpose} {mat_names}"
+            searchable = f"{exp_id} {title} {tags} {purpose} {mat_names}"
 
             if has_cjk:
                 tokens = [text_lower]
@@ -537,7 +692,7 @@ class ToolExecutor:
 class AgentLoop:
     """基于 tool calling 的对话循环"""
 
-    def __init__(self, llm_client, experiment_store):
+    def __init__(self, llm_client, experiment_store, debug_dir: str | Path | None = None):
         self.llm = llm_client
         self.store = experiment_store
         self.context = deepcopy(DEFAULT_CONTEXT)
@@ -546,21 +701,25 @@ class AgentLoop:
         self.experiment_type = "other"
         self.turn_count = 0
         self.tools = ToolExecutor(experiment_store)
-
-        # 调试目录
-        self.debug_dir = (
-            Path(experiment_store.path) / "_debug" /
-            datetime.now().strftime("%Y%m%d_%H%M%S")
-        )
-        os.makedirs(self.debug_dir, exist_ok=True)
+        self._generated_preview = None   # generate_record 工具产出
+        self._generated_notes = None
         self._llm_call_seq = 0      # LLM 调用全局序号（跨 turn 递增）
 
-        # 保存 system prompt 到调试目录（只保存一次）
-        try:
-            (self.debug_dir / "000_system_prompt.txt").write_text(
-                SYSTEM_PROMPT, encoding="utf-8")
-        except Exception:
-            print(f"[DEBUG] save system_prompt failed: {sys.exc_info()[1]}", file=sys.stderr)
+        # 调试目录：新会话创建新目录，恢复会话复用已有路径
+        if debug_dir:
+            self.debug_dir = Path(debug_dir)
+        else:
+            self.debug_dir = (
+                Path(experiment_store.path) / "_debug" /
+                datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
+            os.makedirs(self.debug_dir, exist_ok=True)
+            # 新会话才写 system_prompt（恢复会话已存在）
+            try:
+                (self.debug_dir / "000_system_prompt.txt").write_text(
+                    SYSTEM_PROMPT, encoding="utf-8")
+            except Exception:
+                print(f"[DEBUG] save system_prompt failed: {sys.exc_info()[1]}", file=sys.stderr)
 
     # -- 主循环 --
 
@@ -597,7 +756,7 @@ class AgentLoop:
             # ---- 日志: LLM 响应 ----
             self._log_llm_response(seq, msg, _reasoning)
 
-            # 纯文本 → 不再调工具
+            # 纯文本 → 不再调工具，直接返回
             if msg.content and not msg.tool_calls:
                 entry = {"role": "assistant", "content": msg.content}
                 if _reasoning:
@@ -606,8 +765,6 @@ class AgentLoop:
                 self._save_turn_snapshot()
                 self._save_final_messages()
                 self._save_context()
-                if self._core_fields_filled():
-                    return {"type": "extract", "context": self.context}
                 return {"type": "reply", "message": msg.content,
                         "context": self.context}
 
@@ -683,6 +840,22 @@ class AgentLoop:
                             "message": questions,
                             "context": self.context}
 
+                # generate_record → 生成实验记录，停止循环
+                if name == "generate_record":
+                    self._save_turn_snapshot()
+                    self._save_final_messages()
+                    self._save_context()
+                    if self._generated_preview is None:
+                        return {"type": "reply",
+                                "message": "生成失败，请重试或补充更多信息。",
+                                "context": self.context}
+                    return {"type": "generate",
+                            "message": "实验记录已生成，请在预览中确认。",
+                            "state": self.state_to_dict(),
+                            "preview": self._generated_preview,
+                            "notes": self._generated_notes,
+                            "context": self.context}
+
             # 其他工具执行完 → 继续循环
 
     # -- Step 1.4: Schema 状态摘要 --
@@ -719,6 +892,80 @@ class AgentLoop:
         return "\n".join(lines)
 
     # -- 核心字段检查 --
+
+    def _build_notes_from_context(self) -> str:
+        """从 context 生成自然语言实验描述（Python 模板，不调 LLM）"""
+        ctx = self.context
+        parts = []
+        if ctx.get("title"):
+            parts.append(f"实验标题: {ctx['title']}")
+        if ctx.get("date"):
+            parts.append(f"日期: {ctx['date']}")
+        if ctx.get("experimenter"):
+            parts.append(f"实验者: {ctx['experimenter']}")
+        if ctx.get("purpose"):
+            parts.append(f"实验目的: {ctx['purpose']}")
+        materials = ctx.get("materials", [])
+        if materials:
+            lines = ["材料与试剂:"]
+            for m in materials:
+                if isinstance(m, dict):
+                    name = m.get("name", "")
+                    purity = f", 纯度 {m['purity']}" if m.get("purity") else ""
+                    vendor = f", {m['vendor']}" if m.get("vendor") else ""
+                    amount = f", {m['amount']}" if m.get("amount") else ""
+                    lines.append(f"  - {name}{purity}{vendor}{amount}")
+            parts.append("\n".join(lines))
+        equipment = ctx.get("equipment", [])
+        if equipment:
+            lines = ["仪器设备:"]
+            for e in equipment:
+                if isinstance(e, dict):
+                    lines.append(f"  - {e.get('device', '')}")
+            parts.append("\n".join(lines))
+        sop = ctx.get("sop", [])
+        if sop:
+            lines = ["实验步骤:"]
+            for i, s in enumerate(sop, 1):
+                lines.append(f"  {i}. {s}")
+            parts.append("\n".join(lines))
+        params = ctx.get("process_parameters", [])
+        if params:
+            lines = ["过程参数:"]
+            for p in params:
+                if isinstance(p, dict):
+                    lines.append(f"  - {p.get('parameter', '')}: {p.get('setpoint', '')}")
+            parts.append("\n".join(lines))
+        chara = ctx.get("characterization", [])
+        if chara:
+            lines = ["表征手段:"]
+            for c in chara:
+                if isinstance(c, dict):
+                    lines.append(f"  - {c.get('method', '')}")
+            parts.append("\n".join(lines))
+        results = ctx.get("results", {})
+        if isinstance(results, dict):
+            if results.get("qualitative"):
+                parts.append(f"定性结果: {results['qualitative']}")
+            kd = results.get("key_data", [])
+            if kd:
+                lines = ["关键数据:"]
+                for k in kd:
+                    if isinstance(k, dict):
+                        lines.append(f"  - {k.get('metric', '')}: {k.get('value', '')}")
+                parts.append("\n".join(lines))
+        obs = ctx.get("observations", {})
+        if isinstance(obs, dict):
+            items = obs.get("items", [])
+            if items:
+                parts.append("异常观察: " + "; ".join(str(i) for i in items))
+        if ctx.get("conclusion"):
+            parts.append(f"结论: {ctx['conclusion']}")
+        if ctx.get("next_steps"):
+            nss = ctx["next_steps"]
+            if isinstance(nss, list):
+                parts.append("下一步: " + "; ".join(str(s) for s in nss))
+        return "\n\n".join(parts) if parts else "（无实验描述）"
 
     def _core_fields_filled(self) -> bool:
         """检查核心字段是否已填充。"""
@@ -878,14 +1125,11 @@ class AgentLoop:
 
     @classmethod
     def from_dict(cls, llm_client, store, data: dict) -> "AgentLoop":
-        loop = cls(llm_client, store)
+        loop = cls(llm_client, store, debug_dir=data.get("debug_dir") or None)
         loop.context = data.get("context", deepcopy(DEFAULT_CONTEXT))
         loop.references = data.get("references", [])
         loop.experiment_type = data.get("experiment_type", "other")
         loop.turn_count = data.get("turn_count", 0)
         loop._llm_call_seq = data.get("llm_call_seq", 0)
         loop.history = data.get("history", [])
-        debug_dir = data.get("debug_dir", "")
-        if debug_dir:
-            loop.debug_dir = Path(debug_dir)
         return loop

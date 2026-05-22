@@ -867,18 +867,19 @@ def api_agent_message():
     agent = AgentLoop.from_dict(llm, store, state_dict)
     result = agent.run(user_message)
 
-    # 如果是提取信号，执行结构化提取
-    if result["type"] == "extract":
-        context = result.get("context", {})
-        notes = _build_notes_from_context(context)
-        preview = _extract_or_fallback(notes, context, agent)
+    # 如果是提取信号（generate_record 工具调用 或 旧 extract 兼容）
+    if result["type"] in ("extract", "generate"):
+        notes = result.get("notes") or _build_notes_from_context(result.get("context", {}))
+        preview = result.get("preview") or _extract_or_fallback(notes, result.get("context", {}), agent)
 
         agent.save_final_messages()
         return jsonify({
             "ok": True,
             "type": "extract",
-            "state": agent.state_to_dict(),
-            "message": agent.history[-1].get("content", "实验记录已生成。"),
+            "state": result.get("state") or agent.state_to_dict(),
+            "message": (result.get("message") or
+                        agent.history[-1].get("content") if agent.history else
+                        "实验记录已生成。"),
             "preview": preview,
             "notes": notes,
         })
