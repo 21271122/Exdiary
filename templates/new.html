@@ -287,7 +287,10 @@
   height: 55vh; min-height: 350px;
   border: 1px solid #ddd; border-radius: 12px;
   overflow: hidden; background: var(--pico-card-background-color, #fff);
+  transition: background-color 0.5s ease;
 }
+#chat-panel.thread-record { background: #fff5f5; border-color: #ffcdd2; }
+#chat-panel.thread-analyze { background: #f5f7ff; border-color: #c5cae9; }
 #chat-messages {
   flex: 1; overflow-y: auto; padding: 0.8rem;
   display: flex; flex-direction: column; gap: 0.6rem;
@@ -409,6 +412,53 @@
 .ref-result-row .ref-id { font-weight: 600; font-size: 0.8rem; color: var(--pico-primary); min-width: 90px; }
 .ref-result-row .ref-title { font-size: 0.85rem; flex: 1; }
 .ref-result-row .ref-meta { font-size: 0.7rem; color: var(--pico-muted-color); }
+
+/* Tool result cards */
+.tool-card { margin: 0.5rem 0; border-radius: 8px; border: 1px solid #e0e0e0; overflow: hidden; background: #fafafa; }
+.tc-header { background: #f0f0f0; padding: 0.4rem 0.8rem; font-size: 0.8rem; font-weight: 600; color: #555; }
+.tc-body { padding: 0.5rem 0.8rem; font-size: 0.85rem; line-height: 1.5; }
+.tc-footer { padding: 0.3rem 0.8rem; font-size: 0.75rem; color: #888; border-top: 1px solid #e8e8e8; }
+.tc-actions { padding: 0.4rem 0.8rem; text-align: right; border-top: 1px solid #e8e8e8; }
+
+/* Diff */
+.diff-card { border-left: 3px solid #2563eb; }
+.diff-row { padding: 0.15rem 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.diff-row .df { font-weight: 600; min-width: 3em; }
+.diff-row .do { text-decoration: line-through; color: #999; }
+.diff-row .da { color: #888; }
+.diff-row .dn { color: #16a34a; font-weight: 600; }
+
+/* Answer */
+.answer-card { border-left: 3px solid #9333ea; }
+.answer-card .tc-body p { margin: 0.3rem 0; }
+
+/* Report */
+.report-card { border-left: 3px solid #16a34a; }
+.tc-charts { padding: 0.5rem 0.8rem; color: #888; font-style: italic; }
+
+/* Selector */
+.sel-card { border-left: 3px solid #f59e0b; }
+.sel-item { display: flex; gap: 0.4rem; align-items: center; padding: 0.3rem 0; cursor: pointer; flex-wrap: wrap; font-size: 0.82rem; }
+.sel-id { font-weight: 600; font-family: monospace; }
+.sel-title { flex: 1; }
+.sel-date { color: #888; font-size: 0.75rem; }
+
+/* List */
+.list-card { border-left: 3px solid #0891b2; }
+.exp-card-mini { padding: 0.3rem 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; transition: background 0.15s; }
+.exp-card-mini:hover { background: #f5f5f5; }
+
+/* Schema status */
+.schema-status { font-size: 0.75rem; color: #666; background: #f5f5f5; padding: 0.3rem 0.7rem; border-radius: 6px; }
+
+/* Toast */
+.toast { position: fixed; top: 3.5rem; left: 50%; transform: translateX(-50%); z-index: 2000; background: #333; color: #fff; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.85rem; box-shadow: 0 4px 12px rgba(0,0,0,0.2); animation: slideDown 0.25s ease; }
+@keyframes slideDown { from { transform: translateX(-50%) translateY(-1rem); opacity: 0; } }
+
+/* Analyzing spinner */
+#chat-analyzing { text-align: center; padding: 1.5rem; color: #888; }
+.analyzing-spinner { width: 2rem; height: 2rem; border: 3px solid #e0e0e0; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 0.5rem; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 
 <script>
@@ -429,6 +479,15 @@ window.restorePageState = function(state) {
 // ---- Agent chat panel ----
 var _agentState = null;
 var _sending = false;
+
+function updateThreadColor(state) {
+  var panel = document.getElementById('chat-panel');
+  if (!panel) return;
+  panel.classList.remove('thread-record', 'thread-analyze');
+  var tt = state && state._thread_type;
+  if (tt === 'record') panel.classList.add('thread-record');
+  else if (tt === 'analyze') panel.classList.add('thread-analyze');
+}
 
 function saveAgentState() {
   if (_agentState) {
@@ -496,13 +555,58 @@ async function startAgent() {
       return;
     }
     _agentState = data.state;
-    appendChat('agent', data.message);
+    updateThreadColor(data.state);
+    // 恢复时 greeting 为 null（不发问候语），渲染历史消息
+    if (data.message != null) {
+      appendChat('agent', data.message);
+    }
+    if (_agentState && _agentState.history) {
+      renderHistoryMsgs(_agentState.history);
+    }
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
   } catch(e) {
     appendChat('agent', '初始化失败: ' + e.message);
   }
+}
+
+function _isInternalMsg(m) {
+  if (m.role === 'system') return true;
+  // assistant 有 tool_calls 但没有实质内容（content 为空/null/纯空白）→ 内部消息
+  if (m.role === 'assistant' && m.tool_calls && (!m.content || !String(m.content).trim())) return true;
+  return false;
+}
+
+function _shouldRenderToolResult(content) {
+  try {
+    var r = typeof content === 'string' ? JSON.parse(content) : content;
+    return r && r.display;  // 只有带 display 字段的 tool 结果才渲染
+  } catch(e) { return false; }
+}
+
+function renderHistoryMsgs(history) {
+  var container = document.getElementById('chat-messages');
+  if (!container) return;
+  // 先清空（避免重复渲染）
+  container.innerHTML = '';
+  var lastUserMsg = null;
+  history.forEach(function(m) {
+    if (_isInternalMsg(m)) return;
+    if (m.role === 'user' && m.content) {
+      var d = document.createElement('div'); d.className = 'chat-msg user';
+      d.innerHTML = '<div class="chat-bubble">' + escHtml(m.content) + '</div>';
+      container.appendChild(d);
+      lastUserMsg = d;
+    } else if (m.role === 'assistant' && m.content) {
+      var d2 = document.createElement('div'); d2.className = 'chat-msg agent';
+      d2.innerHTML = '<div class="chat-avatar">&#x1F9EA;</div><div class="chat-bubble">' + (typeof marked !== 'undefined' ? marked.parse(m.content) : escHtml(m.content)) + '</div>';
+      container.appendChild(d2);
+    } else if (m.role === 'tool' && m.content && _shouldRenderToolResult(m.content)) {
+      renderToolResult(m.content, '');
+    }
+  });
+  if (container.lastChild) container.lastChild.scrollIntoView({behavior:'smooth'});
 }
 
 async function sendMessage() {
@@ -530,17 +634,18 @@ async function sendMessage() {
       return;
     }
     _agentState = data.state;
-    appendChat('agent', data.message);
+    updateThreadColor(data.state);
+    if (data.message != null) {
+      appendChat('agent', data.message);
+    }
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
 
-    // v2: extract signal comes directly in the message response
-    if (data.type === 'extract' && data.preview) {
-      _extractedData = data.preview;
-      _extractedData.original_notes = data.notes || '';
-      document.getElementById('chat-panel').style.display = 'none';
-      showPreview(data.preview);
+    // Auto-save: 实验已自动保存，直接跳转
+    if (data.type === 'saved' && data.exp_id) {
+      navigateToPage('/experiments/' + data.exp_id);
+      return;
     }
   } catch(e) {
     _sending = false;
@@ -551,6 +656,8 @@ async function sendMessage() {
 
 function appendChat(role, content) {
   var container = document.getElementById('chat-messages');
+  if (!container) return;
+  if (content == null) return;
   // Remove placeholder text
   var placeholder = container.querySelector('div[style]');
   if (placeholder) placeholder.remove();
@@ -559,7 +666,7 @@ function appendChat(role, content) {
   div.className = 'chat-msg ' + role;
   var avatar = role === 'agent' ? '🧪' : '👤';
   var html = '<div class=\"chat-avatar\">' + avatar + '</div>';
-  html += '<div class=\"chat-bubble\">' + (typeof marked !== 'undefined' ? marked.parse(content) : escHtml(content)) + '</div>';
+  html += '<div class=\"chat-bubble\">' + (typeof marked !== 'undefined' ? marked.parse(String(content)) : escHtml(content)) + '</div>';
   div.innerHTML = html;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
@@ -1273,6 +1380,115 @@ function escHtml(s) {
   var d = document.createElement('div');
   d.textContent = s || '';
   return d.innerHTML;
+}
+
+// ===== Tool Result Renderer =====
+var _renderedMsgs = new WeakSet();
+function renderToolResult(content, toolName) {
+  try { var r = typeof content === 'string' ? JSON.parse(content) : content; }
+  catch(e) { return appendSystemMsg('[工具结果]'); }
+  if (!r || !r.display) return;
+
+  var html = '';
+  switch(r.display) {
+    case 'diff':
+      html = '<div class="tool-card diff-card"><div class="tc-header">&#x270F; 修改了实验</div><div class="tc-body">';
+      (r.changes||[]).forEach(function(c) {
+        html += '<div class="diff-row"><span class="df">'+escHtml(c.field||'')+'</span> <span class="do">'+escHtml(c.old||'')+'</span> <span class="da">&rarr;</span> <span class="dn">'+escHtml(c.new||'')+'</span></div>';
+      });
+      html += '</div></div>';
+      break;
+    case 'answer':
+      html = '<div class="tool-card answer-card"><div class="tc-header">Q: '+escHtml(r.question||'')+'</div><div class="tc-body"><p>'+escHtml(r.answer||'')+'</p></div><div class="tc-footer">来源: '+(r.source==='file'?'已从文件确认':'对话记忆');
+      if (r.exp_ids) r.exp_ids.forEach(function(id) { html += ' <a href="/experiments/'+id+'">'+id+' &rarr;</a>'; });
+      html += '</div></div>';
+      break;
+    case 'report':
+      html = '<div class="tool-card report-card"><div class="tc-body markdown-content">'+(r.markdown||'')+'</div>';
+      if (r.charts && r.charts.length) html += '<div class="tc-charts">图表 ('+r.charts.length+'个)</div>';
+      html += '</div>';
+      break;
+    case 'selector':
+      html = '<div class="tool-card sel-card" data-tool="selector"><div class="tc-header">'+escHtml(r.title||'选择实验')+'</div><div class="tc-body">';
+      (r.items||[]).forEach(function(item) {
+        html += '<label class="sel-item"><input type="checkbox" value="'+escHtml(item.id)+'"><span class="sel-id">'+escHtml(item.id)+'</span> <span class="sel-title">'+escHtml(item.title||'')+'</span> <span class="sel-date">'+(item.date||'')+'</span></label>';
+      });
+      html += '</div><div class="tc-actions"><button onclick="confirmSelector(this)" class="outline">确认选择</button></div></div>';
+      break;
+    case 'toast':
+      showToast(r.message); return;
+    case 'list':
+      html = '<div class="tool-card list-card"><div class="tc-header">找到 '+(r.count||0)+' 个实验</div><div class="tc-body">';
+      (r.experiments||[]).forEach(function(exp) {
+        html += '<article class="exp-card-mini" onclick="navigateToPage(\'/experiments/'+escHtml(exp.id)+'\')"><strong>'+escHtml(exp.id)+'</strong> '+escHtml(exp.title||'')+' <small>'+escHtml(exp.date||'')+'</small></article>';
+      });
+      html += '</div></div>';
+      break;
+    default: appendSystemMsg('[工具: '+escHtml(toolName||'unknown')+']'); return;
+  }
+  var div = document.createElement('div'); div.className = 'chat-msg tool'; div.innerHTML = '<div class="chat-bubble">'+html+'</div>';
+  document.getElementById('chat-messages').appendChild(div);
+  // Re-render markdown in tool cards
+  div.querySelectorAll('.markdown-content:not([data-rendered])').forEach(function(el) {
+    el.innerHTML = marked.parse(el.textContent); el.dataset.rendered = '1';
+  });
+  scrollChat();
+}
+
+function appendSystemMsg(msg) {
+  var div = document.createElement('div'); div.className = 'chat-msg system';
+  div.innerHTML = '<div class="chat-bubble schema-status">'+escHtml(msg)+'</div>';
+  document.getElementById('chat-messages').appendChild(div); scrollChat();
+}
+
+function showToast(msg) {
+  var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity 0.3s';
+    setTimeout(function() { t.remove(); }, 300); }, 2000);
+}
+
+function showAnalyzing(query) {
+  var div = document.getElementById('chat-analyzing');
+  if (!div) { div = document.createElement('div'); div.id = 'chat-analyzing'; div.innerHTML = '<div class="analyzing-spinner"></div><p id="chat-analyzing-text">正在分析...</p><small>可能需要 5-15 秒</small>';
+    document.getElementById('chat-messages').appendChild(div); }
+  else { div.style.display = ''; }
+  document.getElementById('chat-analyzing-text').textContent = '正在分析: ' + (query||'...');
+}
+
+function hideAnalyzing() {
+  var div = document.getElementById('chat-analyzing');
+  if (div) div.style.display = 'none';
+}
+
+function confirmSelector(btn) {
+  var card = btn.closest('.sel-card');
+  var checked = card.querySelectorAll('input:checked');
+  var ids = Array.from(checked).map(function(cb) { return cb.value; });
+  if (!ids.length) return;
+  card.querySelector('.tc-actions').innerHTML = '<span>已选择 '+ids.length+' 个实验</span>';
+  // Send as next user message
+  var input = document.getElementById('chat-input');
+  input.value = '已选择: '+ids.join(', ')+'。请继续。';
+  document.getElementById('btn-send').click();
+}
+
+// ===== Schema Status =====
+function renderSchemaStatus(content) {
+  var div = document.createElement('div'); div.className = 'chat-msg system';
+  div.innerHTML = '<div class="chat-bubble schema-status">'+escHtml(content).replace('[Schema状态]','<strong>Schema</strong>')+'</div>';
+  document.getElementById('chat-messages').appendChild(div); scrollChat();
+}
+
+// ===== Progress =====
+function updateProgress(completeness, turn) {
+  var bar = document.getElementById('chat-progress');
+  if (!bar || !completeness) return;
+  bar.style.display = '';
+  var fill = bar.querySelector('.progress-fill');
+  if (fill) fill.style.width = Math.round(completeness * 100) + '%';
+  var txt = bar.querySelector('small');
+  if (txt) txt.textContent = '完整度 ' + Math.round(completeness * 100) + '% · 第 ' + (turn||1) + ' 轮';
 }
 </script>
 

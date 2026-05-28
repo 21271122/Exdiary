@@ -5,11 +5,12 @@ import socket
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_from_directory
 
-from lib.storage import ExperimentStore, FavoritesStore, AnalysisStore
+from lib.storage import ExperimentStore, FavoritesStore, AnalysisStore, UpdateLogStore, ThreadStore
 from lib.llm import LLMClient
 from lib.parser import parse_notes, strip_html
 from lib.analyzer import analyze_experiments
 from lib.agent_v2 import AgentLoop
+from lib.logger import init_logger, get_logger
 
 BASE_DIR = Path(__file__).parent
 SETTINGS_PATH = BASE_DIR / "config.yaml"
@@ -70,6 +71,7 @@ def save_settings(data: dict) -> None:
 
 
 config = load_settings()
+init_logger(BASE_DIR / "experiments")
 
 
 class TemplateStore:
@@ -380,6 +382,8 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB max request body
 store = ExperimentStore(str(BASE_DIR / "experiments"))
 favorites_store = FavoritesStore(str(BASE_DIR / "experiments" / "_favorites.yaml"))
 analysis_store = AnalysisStore(str(BASE_DIR / "experiments" / "_analysis_history"))
+update_log_store = UpdateLogStore(str(BASE_DIR / "experiments" / "_update_logs"))
+thread_store = ThreadStore(str(BASE_DIR / "experiments" / "_threads"))
 
 
 def get_extract_llm():
@@ -541,6 +545,83 @@ def _update_referenced_by(exp_id: str, refs: list[str]):
                 store.save(ref_exp)
 
 
+def _compute_diff(old: dict, new: dict) -> list[dict]:
+    """Compare two experiment dicts and return a list of {path, field, old, new} changes.
+    Only includes fields where the value actually changed."""
+    changes = []
+    simple_fields = ["title", "date", "experimenter", "status", "purpose",
+                     "conclusion", "original_notes"]
+    array_fields = ["tags", "sop", "next_steps"]
+    complex_fields = ["materials", "equipment", "experimental_plan",
+                      "process_parameters", "characterization"]
+    nested_fields = ["observations", "results"]
+
+    for field in simple_fields:
+        old_val = (old.get(field) or "") if old else ""
+        new_val = (new.get(field) or "") if new else ""
+        if old_val != new_val:
+            changes.append({
+                "path": field,
+                "field": field,
+                "old": str(old_val)[:200],
+                "new": str(new_val)[:200],
+            })
+
+    for field in array_fields:
+        old_val = old.get(field, []) if old else []
+        new_val = new.get(field, []) if new else []
+        if old_val != new_val:
+            changes.append({
+                "path": field,
+                "field": field,
+                "old": ", ".join(str(v) for v in old_val)[:200],
+                "new": ", ".join(str(v) for v in new_val)[:200],
+            })
+
+    for field in complex_fields:
+        old_items = old.get(field, []) if old else []
+        new_items = new.get(field, []) if new else []
+        if old_items != new_items:
+            # Compare by serializing to JSON for complex nested structures
+            import json as _json
+            if _json.dumps(old_items, ensure_ascii=False, sort_keys=True) != \
+               _json.dumps(new_items, ensure_ascii=False, sort_keys=True):
+                changes.append({
+                    "path": field,
+                    "field": field,
+                    "old": f"{len(old_items)} entries" if old_items else "empty",
+                    "new": f"{len(new_items)} entries" if new_items else "empty",
+                })
+
+    for field in nested_fields:
+        old_val = old.get(field, {}) if old else {}
+        new_val = new.get(field, {}) if new else {}
+        if old_val != new_val:
+            changes.append({
+                "path": field,
+                "field": field,
+                "old": "filled" if old_val else "empty",
+                "new": "filled" if new_val else "empty",
+            })
+
+    return changes
+
+
+def _log_update(exp_id: str, source: str, old_exp: dict | None,
+                new_exp: dict, thread_id: str | None = None) -> str | None:
+    """Compute diff and write update log entry. Returns entry_id or None if no changes."""
+    changes = _compute_diff(old_exp, new_exp)
+    if not changes:
+        return None
+    return update_log_store.append(
+        exp_id=exp_id,
+        source=source,
+        changes=changes,
+        context={"summary": f"修改了 {len(changes)} 个字段"},
+        thread_id=thread_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # View experiment
 # ---------------------------------------------------------------------------
@@ -584,7 +665,10 @@ def edit_experiment(exp_id):
         data = yaml.safe_load(yaml_text)
         if not isinstance(data, dict):
             raise ValueError("YAML content must be a dictionary")
+        # Read old values from disk before update (for diff)
+        old_exp = store.load(exp_id)
         store.update(exp_id, data)
+        _log_update(exp_id, "manual_edit", old_exp, data)
         return redirect(url_for("view_experiment", exp_id=exp_id))
     except Exception as e:
         return render_template("edit.html", exp_id=exp_id,
@@ -597,6 +681,14 @@ def edit_experiment(exp_id):
 # ---------------------------------------------------------------------------
 @app.route("/experiments/<exp_id>/delete", methods=["DELETE"])
 def delete_experiment(exp_id):
+    # Write system log before deleting
+    update_log_store.append(
+        exp_id=exp_id,
+        source="system",
+        changes=[{"path": "_deleted", "field": "实验记录",
+                  "old": exp_id, "new": "[已删除]"}],
+        context={"summary": f"实验记录 {exp_id} 已被删除"},
+    )
     store.delete(exp_id)
     return "", 200
 
@@ -609,14 +701,17 @@ def save_experiment_json(exp_id):
     data = request.get_json()
     if not data or not isinstance(data, dict):
         return jsonify({"ok": False, "error": "Invalid JSON"}), 400
+    # Read old values from disk before update (for diff)
+    old_exp = store.load(exp_id)
     # Extract and update references
     notes = data.get("original_notes", "")
     refs = _extract_references(notes)
-    old_exp = store.load(exp_id)
     old_refs = old_exp.get("references", []) if old_exp else []
     data["references"] = refs
     store.update(exp_id, data)
     _update_referenced_by(exp_id, refs)
+    # Write update log
+    _log_update(exp_id, "manual_edit", old_exp, data)
     # Remove from old references
     for rid in old_refs:
         if rid not in refs:
@@ -829,18 +924,39 @@ def compare_experiments():
 
 @app.route("/api/agent/start", methods=["POST"])
 def api_agent_start():
-    """初始化 Agent 对话，返回第一条消息和初始状态。"""
+    """初始化 Agent 对话。如有 _current_state.yaml → 恢复；如无 → 全新。"""
     llm = get_agent_llm()
     if not llm:
         return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
 
-    agent = AgentLoop(llm, store)
+    # 尝试从 _current_state.yaml 恢复
+    saved = thread_store.load_current_state()
+    if saved:
+        agent = AgentLoop.from_dict(llm, store, saved,
+                                    thread_store=thread_store,
+                                    update_log_store=update_log_store,
+                                    favorites_store=favorites_store,
+                                    analysis_store=analysis_store)
+        return jsonify({
+            "ok": True,
+            "state": agent.state_to_dict(),
+            "type": "reply",
+            "message": None,
+            "greeting": None,
+        })
+
+    # 全新初始化
+    agent = AgentLoop(llm, store, thread_store=thread_store,
+                     update_log_store=update_log_store,
+                     favorites_store=favorites_store,
+                     analysis_store=analysis_store)
     result = agent.run("")
     return jsonify({
         "ok": True,
         "state": agent.state_to_dict(),
         "type": result["type"],
         "message": result.get("message", ""),
+        "greeting": result.get("message", ""),
         "context": result.get("context", {}),
     })
 
@@ -864,24 +980,29 @@ def api_agent_message():
         return jsonify({"ok": False, "error": "缺少 state"}), 400
 
     # 从 state dict 重建 AgentLoop
-    agent = AgentLoop.from_dict(llm, store, state_dict)
+    agent = AgentLoop.from_dict(llm, store, state_dict,
+                                thread_store=thread_store,
+                                update_log_store=update_log_store,
+                                favorites_store=favorites_store,
+                                analysis_store=analysis_store)
     result = agent.run(user_message)
 
-    # 如果是提取信号（generate_record 工具调用 或 旧 extract 兼容）
+    # 父Agent generate_record → 自动保存，无需预览
     if result["type"] in ("extract", "generate"):
         notes = result.get("notes") or _build_notes_from_context(result.get("context", {}))
         preview = result.get("preview") or _extract_or_fallback(notes, result.get("context", {}), agent)
-
-        agent.save_final_messages()
+        preview["id"] = store.next_id()
+        refs = _extract_references(notes)
+        preview["references"] = refs
+        store.save(preview)
+        _update_referenced_by(preview["id"], refs)
+        _move_draft_images(preview["id"])
         return jsonify({
             "ok": True,
-            "type": "extract",
+            "type": "saved",
+            "exp_id": preview["id"],
             "state": result.get("state") or agent.state_to_dict(),
-            "message": (result.get("message") or
-                        agent.history[-1].get("content") if agent.history else
-                        "实验记录已生成。"),
-            "preview": preview,
-            "notes": notes,
+            "message": result.get("message", "实验记录已生成。"),
         })
 
     return jsonify({
@@ -897,6 +1018,215 @@ def api_agent_message():
 def api_agent_confirm():
     """确认保存 Agent 生成的实验记录。委托到现有保存逻辑。"""
     return api_parse_confirm()
+
+
+# ---------------------------------------------------------------------------
+# Child Agent API — EXP 详情页对话修改
+# ---------------------------------------------------------------------------
+
+@app.route("/api/exp/<exp_id>/chat", methods=["POST"])
+def api_exp_chat(exp_id):
+    """子 Agent 入口。空消息=打开面板(只加载上下文不跑LLM)；有消息=发送消息(正常运行)。"""
+    llm = get_agent_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
+
+    data = request.get_json() or {}
+    user_message = (data.get("message") or "").strip()
+    state_dict = data.get("state")
+    is_legacy = data.get("is_legacy", False)
+
+    # 查反向映射
+    idx = thread_store.get_index()
+    thread_id = idx.get("exp_to_thread", {}).get(exp_id)
+
+    # ---- 旧实验（无线程）----
+    if not thread_id:
+        exp = store.load(exp_id)
+        if not exp:
+            return jsonify({"ok": False, "error": "实验不存在"}), 404
+
+        # 尝试从磁盘恢复永久状态（legacy用exp_id作为key）
+        disk_state = thread_store.load_child_state(exp_id)
+        if disk_state and not is_legacy:
+            agent = AgentLoop.from_dict(llm, store, disk_state,
+                                        thread_store=thread_store,
+                                        update_log_store=update_log_store,
+                                        favorites_store=favorites_store,
+                                        analysis_store=analysis_store)
+            if user_message:
+                result = agent.run(user_message)
+                return _make_chat_response(agent, result, None, thread_store)
+            else:
+                state = agent.state_to_dict()
+                thread_store.save_child_state(exp_id, state)
+                return jsonify({"ok": True, "state": state})
+
+        # 仅打开面板 → 返回实验数据让前端展示legacy警告
+        if not user_message and not is_legacy:
+            return jsonify({
+                "ok": True, "is_legacy": True,
+                "exp_data": {
+                    "id": exp.get("id"), "title": exp.get("title", ""),
+                    "date": exp.get("date", ""), "status": exp.get("status", ""),
+                    "tags": exp.get("tags", []),
+                    "purpose": (exp.get("purpose") or "")[:200],
+                    "materials": exp.get("materials", []),
+                    "sop": exp.get("sop", []),
+                    "process_parameters": exp.get("process_parameters", []),
+                    "results": exp.get("results", {}),
+                    "conclusion": (exp.get("conclusion") or "")[:200],
+                    "next_steps": exp.get("next_steps", []),
+                },
+            })
+        # 旧实验 + 消息 → 创建 legacy child agent 并运行
+        exp_data = {
+            "id": exp.get("id"), "title": exp.get("title", ""),
+            "tags": exp.get("tags", []),
+            "purpose": (exp.get("purpose") or "")[:200],
+            "materials": exp.get("materials", []),
+            "sop": exp.get("sop", []),
+            "process_parameters": exp.get("process_parameters", []),
+            "results": exp.get("results", {}),
+            "conclusion": (exp.get("conclusion") or "")[:200],
+            "next_steps": exp.get("next_steps", []),
+            "status": exp.get("status", "done"),
+            "date": exp.get("date", ""),
+            "experimenter": exp.get("experimenter", ""),
+        }
+        agent = AgentLoop.create_legacy_child_agent(
+            llm, store, exp_data,
+            thread_store=thread_store, update_log_store=update_log_store,
+            favorites_store=favorites_store, analysis_store=analysis_store)
+        agent._child_exp_id = exp_id
+        agent.history.append({
+            "role": "system",
+            "content": f"[修改模式] 你正在修改已完成的实验 {exp_id}。修改前先用 load_reference 加载磁盘最新数据（不要依赖对话记忆）。修改用 modify_experiment 工具直接执行，会自动保存和记录日志。不要用 update_schema 或 generate_record。查询信息用 query_experiment，查历史用 read_update_log。"
+        })
+        result = agent.run(user_message)
+        return _make_chat_response(agent, result, thread_id, thread_store)
+
+    # ---- 有线程（正常实验）----
+
+    # 恢复已有子Agent状态（前端 sessionStorage 或磁盘 child_state.yaml）
+    if not state_dict:
+        # 尝试从磁盘恢复永久状态
+        disk_state = thread_store.load_child_state(thread_id)
+        if disk_state:
+            state_dict = disk_state
+
+    if state_dict:
+        agent = AgentLoop.from_dict(llm, store, state_dict,
+                                    thread_store=thread_store,
+                                    update_log_store=update_log_store,
+                                    favorites_store=favorites_store,
+                                    analysis_store=analysis_store)
+        if user_message:
+            result = agent.run(user_message)
+            return _make_chat_response(agent, result, thread_id, thread_store)
+        else:
+            # 仅恢复状态，不跑LLM
+            state = agent.state_to_dict()
+            if thread_id:
+                thread_store.save_child_state(thread_id, state)
+            return jsonify({"ok": True, "state": state})
+
+    # 首次打开 → 加载线程上下文，不跑LLM
+    parent = AgentLoop(llm, store, thread_store=thread_store,
+                      update_log_store=update_log_store,
+                      favorites_store=favorites_store,
+                      analysis_store=analysis_store)
+    agent = AgentLoop.create_child_agent(parent, thread_id)
+    agent._child_exp_id = exp_id
+    agent.history.append({
+        "role": "system",
+        "content": f"[修改模式] 你正在修改已完成的实验 {exp_id}。修改前先用 load_reference 加载磁盘最新数据（不要依赖对话记忆）。修改用 modify_experiment 工具直接执行，会自动保存和记录日志。不要用 update_schema 或 generate_record。查询信息用 query_experiment，查历史用 read_update_log。"
+    })
+
+    if user_message:
+        result = agent.run(user_message)
+        return _make_chat_response(agent, result, thread_id, thread_store)
+    else:
+        # 无消息 → 仅返回状态，不跑LLM
+        state = agent.state_to_dict()
+        if thread_id:
+            thread_store.save_child_state(thread_id, state)
+        return jsonify({"ok": True, "state": state})
+
+
+def _make_chat_response(agent, result, thread_id, thread_store):
+    """构造子Agent的HTTP响应。"""
+    state = agent.state_to_dict()
+    # 子Agent状态持久化到磁盘（永久保留，不随确认保存而删除）
+    key = thread_id or agent._child_exp_id
+    if key:
+        thread_store.save_child_state(key, state)
+
+    if result["type"] in ("extract", "generate"):
+        preview = agent._generated_preview
+        return jsonify({
+            "ok": True, "type": "extract", "state": state,
+            "message": result.get("message", "实验记录已生成，请在预览中确认。"),
+            "preview": preview,
+        })
+    return jsonify({
+        "ok": True, "state": state,
+        "type": result["type"],
+        "message": result.get("message", ""),
+    })
+
+
+@app.route("/api/exp/<exp_id>/confirm", methods=["POST"])
+def api_exp_confirm(exp_id):
+    """子 Agent 确认保存。读磁盘旧值 → 写更新日志 → 保存 → 子Agent清理。"""
+    body = request.get_json()
+    if not body or not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "无效的请求数据"}), 400
+
+    # 从 body 中提取实验数据和 state
+    data = body.get("preview") or {}
+    state_dict = body.get("state")
+    if not data or not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "缺少实验数据"}), 400
+
+    # 读磁盘旧值
+    old_exp = store.load(exp_id)
+    data["id"] = exp_id
+
+    # 整理引用
+    notes = data.get("original_notes", "")
+    refs = _extract_references(notes)
+    old_refs = old_exp.get("references", []) if old_exp else []
+    data["references"] = refs
+
+    # 从 state 中获取 thread_id（如果有）
+    thread_id = None
+    if state_dict and isinstance(state_dict, dict):
+        thread_id = state_dict.get("thread_id")
+
+    # 写更新日志
+    _log_update(exp_id, "child_agent", old_exp, data,
+                thread_id=thread_id)
+
+    # 保存
+    store.save(data)
+    # 统一日志：操作记录
+    log = get_logger()
+    if log:
+        log.operation("exp_saved", agent="child", exp=exp_id, source="child_agent")
+    _update_referenced_by(exp_id, refs)
+    for rid in old_refs:
+        if rid not in refs:
+            r_exp = store.load(rid)
+            if r_exp:
+                rb = r_exp.get("referenced_by", [])
+                if exp_id in rb:
+                    rb.remove(exp_id)
+                    r_exp["referenced_by"] = rb
+                    store.save(r_exp)
+
+    return jsonify({"ok": True, "exp_id": exp_id})
+
 
 
 # -- 辅助函数 --
@@ -1192,6 +1522,11 @@ if __name__ == "__main__":
     # 修复 Windows 控制台中文乱码（方格问题）
     if sys.stdout.encoding != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
+
+    log = get_logger()
+    if log:
+        log.system("info", "startup", port=config.get("PORT", 5000),
+                   gui=config.get("GUI", "true"))
 
     port = int(config.get("PORT", 5000))
     host = config.get("HOST", "0.0.0.0")
