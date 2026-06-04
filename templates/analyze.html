@@ -1,430 +1,104 @@
 {% extends "base.html" %}
-{% block title %}实验分析{% endblock %}
+{% block title %}分析报告{% endblock %}
 {% block page_id %}analyze{% endblock %}
 {% block content %}
 
-<h1>&#x1f4ca; 实验分析与建议</h1>
-<p style="color:var(--pico-muted-color)">选择需要分析的实验，AI 会阅读你选中的实验记录，帮你发现趋势、矛盾、缺失环节，并建议下一步方向。</p>
+<h1>&#x1f4ca; 分析报告</h1>
+<p style="color:var(--pico-muted-color)">在对话页面让 Agent 帮你分析实验数据，分析报告会自动归档到这里。</p>
 
-{% if not analysis %}
-
-{# ===== 搜索与筛选面板 ===== #}
-<div class="search-panel">
-  <input type="search" id="search-input"
-         placeholder="搜索实验标题、目的、结论..."
-         autocomplete="off">
-
-  <div id="status-filters">
-    <span class="filter-chip" data-status="">全部</span>
-    <span class="filter-chip" data-status="done">done</span>
-    <span class="filter-chip" data-status="planned">planned</span>
-    <span class="filter-chip" data-status="running">running</span>
-    <span class="filter-chip" data-status="failed">failed</span>
-    <span class="filter-chip" data-status="repeated">repeated</span>
-  </div>
-</div>
-
-{# ===== 选择操作栏 ===== #}
-<div class="select-bar">
-  <div>
-    <button type="button" id="btn-toggle-all" class="outline secondary" style="font-size:0.78rem;padding:0.2rem 0.6rem" onclick="toggleSelectAll()">&#x2611; 全选</button>
-  </div>
-  <span id="selected-count" style="font-size:0.85rem;color:var(--pico-muted-color)">已选择 0 个实验</span>
-</div>
-
-{# ===== 实验选择列表 ===== #}
-<div id="experiment-select-list" class="exp-select-list">
+<div id="analysis-list">
   <div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">加载中...</div>
 </div>
 
-{# ===== 提交表单 ===== #}
-<form method="post" action="/api/analyze" id="analyze-form" onsubmit="return false">
-  <input type="hidden" name="selected_ids" id="selected-ids-hidden">
-
-  <label for="question" style="margin-top:1.5rem">
-    <strong>你想了解什么？</strong>
-    <small>（可选：留空则进行全盘分析）</small>
-  </label>
-  <input type="text" id="question" name="question"
-    placeholder="例如：TiO2 系列实验中最佳负载量是多少？或者：我的烧结实验有什么规律？"
-    style="font-size:0.95rem" onkeydown="if(event.key==='Enter'){event.preventDefault();submitAnalysis()}">
-
-      <div style="display:flex;gap:0.5rem;align-items:center;margin-top:1rem">
-        <button type="button" id="btn-submit" onclick="submitAnalysis()">&#x1f50d; 开始分析</button>
-        <button type="button" class="outline secondary" style="font-size:0.85rem" onclick="toggleHistory()">&#x1f4c4; 历史分析</button>
-      </div>
-      {# History panel #}
-      <div id="history-panel" style="display:none;margin-top:1rem">
-        <h3>历史分析记录</h3>
-        <div id="history-list" style="max-height:400px;overflow-y:auto;border:1px solid #ddd;border-radius:8px">
-          <div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">加载中...</div>
-        </div>
-      </div>
-</form>
-
-{% endif %}
-
-{# ===== 分析结果 ===== #}
-<div id="analysis-result" style="margin-top:2rem">
-  {% if error %}
-  <div class="flash flash-error">{{ error }}</div>
-  {% endif %}
-
-  {% if analysis %}
-  <div class="markdown-content" style="background:var(--pico-card-background-color);padding:1.5rem;border-radius:8px">
-{{ analysis }}
-  </div>
-  <div style="text-align:center;margin-top:1.5rem">
-    <a href="/analyze" role="button" class="outline">&#x1f50d; 问另一个问题</a>
-    <a href="/" role="button" class="outline secondary">&larr; 返回仪表盘</a>
-  </div>
-  {% endif %}
+<div id="empty-state" class="empty-state" style="display:none">
+  <h3>&#x1f4ca; 还没有分析报告</h3>
+  <p>在对话页面让 Agent 帮你分析实验吧。说出你的分析需求，Agent 会引导你完成整个过程。</p>
+  <a href="/new" role="button">&#x1f4ac; 前往对话</a>
 </div>
 
 <style>
-.search-panel { margin-bottom: 1rem; }
-#search-input { margin-bottom: 0.5rem; font-size: 0.95rem; }
-
-.filter-chip {
-  display: inline-block;
-  padding: 0.15em 0.65em;
-  margin: 0.15em;
-  border-radius: 14px;
-  font-size: 0.78em;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid #ccc;
-  background: #f0f0f0;
-  color: #555;
-  transition: all 0.15s;
-  user-select: none;
-}
-.filter-chip.active { background: var(--pico-primary); color: #fff; border-color: var(--pico-primary); }
-#status-filters { margin-bottom: 0.3rem; display: flex; gap: 0.2rem; flex-wrap: wrap; }
-
-.select-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.exp-select-list {
-  max-height: 420px;
-  overflow-y: auto;
+.analysis-card {
+  background: var(--pico-card-background-color);
   border: 1px solid var(--pico-card-border-color, #ddd);
-  border-radius: 8px;
-}
-
-.exp-select-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.55rem 0.8rem;
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1rem;
   cursor: pointer;
-  border-bottom: 1px solid #eee;
-  transition: background 0.1s;
-  user-select: none;
+  transition: box-shadow 0.15s;
 }
-.exp-select-row:last-child { border-bottom: none; }
-.exp-select-row:hover { background: var(--pico-card-background-color); }
-.exp-select-row.selected { background: #e8f4fd; }
-
-.exp-select-row .check-box {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border: 2px solid #bbb;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: transparent;
-  transition: all 0.15s;
+.analysis-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+.analysis-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.3rem;
 }
-.exp-select-row.selected .check-box {
-  background: var(--pico-primary);
-  border-color: var(--pico-primary);
-  color: #fff;
+.analysis-id { font-weight: 600; font-size: 0.85rem; color: var(--pico-primary); }
+.analysis-date { font-size: 0.78rem; color: var(--pico-muted-color); }
+.analysis-title { font-weight: 600; font-size: 1rem; margin-bottom: 0.3rem; }
+.analysis-question {
+  font-size: 0.82rem; color: var(--pico-muted-color);
+  margin-bottom: 0.4rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-
-.exp-select-info { flex: 1; min-width: 0; }
-.exp-select-id { font-weight: 600; font-size: 0.8rem; color: var(--pico-primary); }
-.exp-select-title { font-size: 0.88rem; margin: 0.1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.exp-select-meta { font-size: 0.75rem; color: var(--pico-muted-color); }
-
-@media (max-width: 576px) {
-  .exp-select-row { padding: 0.5rem 0.6rem; }
-  .exp-select-title { font-size: 0.82rem; }
+.analysis-summary {
+  font-size: 0.85rem; color: var(--pico-color, #333);
+  margin-bottom: 0.5rem; line-height: 1.5;
 }
+.analysis-refs { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.analysis-refs a { font-size: 0.75rem; color: var(--pico-primary); text-decoration: none; }
+.analysis-refs a:hover { text-decoration: underline; }
+.analysis-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.analysis-actions button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
 </style>
 
 <script>
-// ---- Page state save/restore for navigation history ----
-var _pendingSelectedIds = null;
-
-window.savePageState = function() {
-  return {
-    scrollY: window.scrollY,
-    selectedIds: Object.keys(_selectedIds),
-    question: document.getElementById('question') ? document.getElementById('question').value : ''
-  };
-};
-
+window.savePageState = function() { return {scrollY: window.scrollY}; };
 window.restorePageState = function(state) {
-  if (!state) return;
-  // Scroll and question text restored immediately (DOM already rendered)
-  if (state.scrollY !== undefined) window.scrollTo(0, state.scrollY);
-  if (state.question) {
-    var qInput = document.getElementById('question');
-    if (qInput) qInput.value = state.question;
-  }
-  // Selections deferred until experiment list is fetched
-  if (state.selectedIds) _pendingSelectedIds = state.selectedIds;
+  if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY);
 };
-
-var _allExperiments = [];
-var _selectedIds = {};
-
-fetch('/api/experiments/search')
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    _allExperiments = data;
-    renderSelectList(data);
-    // Restore selections after fetching
-    if (_pendingSelectedIds) {
-      _pendingSelectedIds.forEach(function(id) { _selectedIds[id] = true; });
-      renderSelectList(data);
-      updateSelectCount();
-      _pendingSelectedIds = null;
-    }
-  });
-
-function renderSelectList(experiments) {
-  var container = document.getElementById('experiment-select-list');
-  if (experiments.length === 0) {
-    container.innerHTML = '<div class="empty-state" style="padding:2rem"><p>还没有实验记录</p></div>';
-    return;
-  }
-  var html = '';
-  experiments.forEach(function(exp) {
-    var sel = _selectedIds[exp.id] ? ' selected' : '';
-    html += '<div class="exp-select-row' + sel + '" data-exp-id="' + escHtml(exp.id) + '" onclick="toggleSelect(this, \'' + escHtml(exp.id) + '\')">';
-    html += '<div class="check-box">&#x2713;</div>';
-    html += '<div class="exp-select-info">';
-    html += '<div class="exp-select-id">' + escHtml(exp.id) + ' <span class="status-badge status-' + (exp.status || 'planned') + '">' + (exp.status || 'planned') + '</span></div>';
-    html += '<div class="exp-select-title">' + escHtml(exp.title || '(无标题)') + '</div>';
-    html += '<div class="exp-select-meta">' + escHtml(exp.date || '') + '</div>';
-    html += '</div></div>';
-  });
-  container.innerHTML = html;
-  updateSelectCount();
-}
-
-function toggleSelect(rowEl, expId) {
-  if (_selectedIds[expId]) {
-    delete _selectedIds[expId];
-    rowEl.classList.remove('selected');
-  } else {
-    _selectedIds[expId] = true;
-    rowEl.classList.add('selected');
-  }
-  updateSelectCount();
-}
-
-function toggleSelectAll() {
-  var rows = document.querySelectorAll('#experiment-select-list .exp-select-row');
-  var allSelected = rows.length > 0;
-  rows.forEach(function(row) {
-    if (!_selectedIds[row.dataset.expId]) { allSelected = false; }
-  });
-  if (allSelected) {
-    // 取消全选
-    _selectedIds = {};
-    rows.forEach(function(row) { row.classList.remove('selected'); });
-  } else {
-    // 全选
-    rows.forEach(function(row) {
-      var id = row.dataset.expId;
-      _selectedIds[id] = true;
-      row.classList.add('selected');
-    });
-  }
-  updateSelectCount();
-}
-
-function updateSelectCount() {
-  var count = Object.keys(_selectedIds).length;
-  document.getElementById('selected-count').textContent = '已选择 ' + count + ' 个实验';
-  // 同步切换按钮状态
-  var btn = document.getElementById('btn-toggle-all');
-  var rows = document.querySelectorAll('#experiment-select-list .exp-select-row');
-  var allSelected = rows.length > 0;
-  rows.forEach(function(row) {
-    if (!_selectedIds[row.dataset.expId]) { allSelected = false; }
-  });
-  btn.innerHTML = allSelected ? '&#x2610; 取消全选' : '&#x2611; 全选';
-}
-
-function submitAnalysis() {
-  var ids = Object.keys(_selectedIds);
-  if (ids.length === 0) {
-    alert('请至少选择一个实验进行分析。');
-    return;
-  }
-  // Save current state before form submission
-  if (typeof window.savePageState === 'function') {
-    var state = window.savePageState();
-    var navData = JSON.parse(sessionStorage.getItem('exdiary_nav') || '{"history":[],"states":{},"isBack":false}');
-    navData.states['analyze'] = state;
-    navData.history.push({page: 'analyze', url: window.location.href});
-    navData.isBack = false;
-    sessionStorage.setItem('exdiary_nav', JSON.stringify(navData));
-  }
-  document.getElementById('selected-ids-hidden').value = ids.join(',');
-  var btn = document.getElementById('btn-submit');
-  btn.disabled = true;
-  btn.textContent = '⏳ AI 分析中...';
-  document.getElementById('analyze-form').submit();
-}
-
-// ---- 搜索与筛选 ----
-function filterExperiments() {
-  var query = document.getElementById('search-input').value.trim().toLowerCase();
-  var activeChip = document.querySelector('#status-filters .filter-chip.active');
-  var statusFilter = activeChip ? activeChip.dataset.status : '';
-
-  var filtered = _allExperiments.filter(function(exp) {
-    if (query) {
-      var searchable = [
-        exp.title, exp.purpose, exp.conclusion,
-        (exp.sop || []).join(' '),
-        (exp.materials || []).map(function(m) { return m.name || ''; }).join(' '),
-        (exp.tags || []).join(' ')
-      ].join(' ').toLowerCase();
-      if (searchable.indexOf(query) === -1) return false;
-    }
-    if (statusFilter && exp.status !== statusFilter) return false;
-    return true;
-  });
-
-  renderSelectList(filtered);
-}
 
 function escHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s || '';
-  return d.innerHTML;
+  var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
 }
 
-document.getElementById('search-input').addEventListener('input', filterExperiments);
-
-// ---- History toggle ----
-function toggleHistory() {
-  var panel = document.getElementById('history-panel');
-  if (!panel) return;
-  if (panel.style.display === 'block') {
-    panel.style.display = 'none';
-    return;
-  }
-  panel.style.display = 'block';
-  // Load history
-  fetch('/api/analysis-history')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      var list = document.getElementById('history-list');
-      if (!Array.isArray(data) || data.length === 0) {
-        list.innerHTML = '<div style="text-align:center;padding:1.5rem;color:var(--pico-muted-color)">暂无历史分析记录</div>';
-        return;
-      }
-      var html = '';
-      data.forEach(function(a) {
-        var q = (a.question || '全盘分析').substring(0, 40);
-        if (a.question && a.question.length > 40) q += '...';
-        var ids = (a.selected_ids || []).join(', ');
-        html += '<div style="border-bottom:1px solid #eee;padding:0.7rem 0.9rem;transition:background 0.1s;cursor:pointer" onmouseenter="this.style.background=\'#f8f8f8\'" onmouseleave="this.style.background=\'\'">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;flex-wrap:wrap">';
-        html += '<div><strong style="font-size:0.85rem">' + escHtml(a.id || '') + '</strong>';
-        html += ' <small style="color:var(--pico-muted-color)">' + escHtml(a.timestamp || '') + '</small></div>';
-        html += '<div style="display:flex;gap:0.3rem">';
-        html += '<button class="outline secondary" style="font-size:0.65rem;padding:0.1rem 0.4rem" onclick="event.stopPropagation();loadHistory(\'' + escHtml(a.id) + '\')">查看</button>';
-        html += '<button class="outline secondary" style="font-size:0.65rem;padding:0.1rem 0.4rem" onclick="event.stopPropagation();rerunHistory(\'' + escHtml(a.id) + '\')">重新分析</button>';
-        html += '<button class="outline secondary" style="font-size:0.65rem;padding:0.1rem 0.4rem;color:#e53935;border-color:#e53935" onclick="event.stopPropagation();deleteHistory(\'' + escHtml(a.id) + '\')">删除</button>';
-        html += '</div></div>';
-        html += '<div style="font-size:0.8rem;color:var(--pico-muted-color);margin-top:0.2rem">' + escHtml(q) + '</div>';
-        html += '<div style="font-size:0.7rem;color:var(--pico-muted-color)">涉及实验: ' + escHtml(ids) + '</div>';
-        html += '</div>';
-      });
-      list.innerHTML = html;
+fetch('/api/analysis-history')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var list = document.getElementById('analysis-list');
+    var empty = document.getElementById('empty-state');
+    if (!Array.isArray(data) || data.length === 0) {
+      list.style.display = 'none';
+      empty.style.display = '';
+      return;
+    }
+    var html = '';
+    data.forEach(function(a) {
+      var ids = (a.selected_ids || []).join(', ');
+      var refLinks = (a.selected_ids || []).map(function(id) {
+        return '<a href="/experiments/' + escHtml(id) + '" onclick="event.stopPropagation()">' + escHtml(id) + '</a>';
+      }).join(' ');
+      html += '<article class="analysis-card" onclick="navigateToPage(\'/analysis/' + escHtml(a.id || '') + '\')">';
+      html += '<div class="analysis-header"><span class="analysis-id">' + escHtml(a.id || '') + '</span><span class="analysis-date">' + escHtml(a.timestamp || '') + '</span></div>';
+      html += '<div class="analysis-question">问题：' + escHtml((a.question || '全盘分析')) + '</div>';
+      if (refLinks) html += '<div class="analysis-refs">关联实验：' + refLinks + '</div>';
+      html += '<div class="analysis-actions">';
+      html += '<button class="outline secondary" onclick="event.stopPropagation();navigateToPage(\'/analysis/' + escHtml(a.id || '') + '\')">查看完整报告 &rarr;</button>';
+      html += '<button class="outline secondary" style="color:#e53935;border-color:#e53935" onclick="event.stopPropagation();deleteAnalysis(\'' + escHtml(a.id || '') + '\')">删除</button>';
+      html += '</div></article>';
     });
-}
+    list.innerHTML = html;
+    list.style.display = '';
+    empty.style.display = 'none';
+  });
 
-function loadHistory(aid) {
-  fetch('/api/analysis-history/' + aid)
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (!r.ok) { alert('加载失败'); return; }
-      var a = r.data;
-      // Show analysis in result area
-      var resultDiv = document.getElementById('analysis-result');
-      resultDiv.innerHTML =
-        '<div style="margin-bottom:1rem;font-size:0.85rem;color:var(--pico-muted-color)">加载历史分析: <strong>' + escHtml(a.id) + '</strong> | ' + escHtml(a.timestamp || '') + '</div>' +
-        '<div class="markdown-content" style="background:var(--pico-card-background-color);padding:1.5rem;border-radius:8px">' + (a.analysis || '') + '</div>' +
-        '<div style="text-align:center;margin-top:1rem"><a href="/analyze" role="button" class="outline">&#x1f50d; 新分析</a></div>';
-      // Render markdown
-      document.querySelectorAll('.markdown-content:not([data-rendered])').forEach(function(el) {
-        el.innerHTML = marked.parse(el.textContent);
-        el.dataset.rendered = '1';
-      });
-      document.getElementById('history-panel').style.display = 'none';
-    });
-}
-
-function rerunHistory(aid) {
-  fetch('/api/analysis-history/' + aid)
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (!r.ok) { alert('加载失败'); return; }
-      var a = r.data;
-      navigateToPage('/analyze?question=' + encodeURIComponent(a.question || ''));
-    });
-}
-
-// Load question from URL param
-(function() {
-  var params = new URLSearchParams(window.location.search);
-  var q = params.get('question');
-  if (q) {
-    var input = document.getElementById('question');
-    if (input) input.value = q;
-  }
-})();
-
-function deleteHistory(aid) {
+function deleteAnalysis(aid) {
   if (!confirm('确定要删除 ' + aid + ' 吗？')) return;
   fetch('/api/analysis-history/' + aid, {method:'DELETE'})
     .then(function(r) { return r.json(); })
     .then(function(r) {
-      if (r.ok) toggleHistory(); // Refresh list
+      if (r.ok) location.reload();
+      else alert('删除失败');
     });
 }
-
-function escHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s || '';
-  return d.innerHTML;
-}
-document.querySelectorAll('#status-filters .filter-chip').forEach(function(chip) {
-  chip.addEventListener('click', function() {
-    var parent = this.parentElement;
-    parent.querySelectorAll('.filter-chip').forEach(function(c) { c.classList.remove('active'); });
-    if (this.dataset.status) this.classList.add('active');
-    filterExperiments();
-  });
-});
 </script>
 
 {% endblock %}

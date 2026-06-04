@@ -795,56 +795,166 @@ def timeline():
 
 
 # ---------------------------------------------------------------------------
-# Analysis page
+# Analysis page — history list
 # ---------------------------------------------------------------------------
 @app.route("/analyze")
 def analyze_page():
-    count = store.count()
-    return render_template("analyze.html", count=count)
+    return render_template("analyze.html")
 
 
 # ---------------------------------------------------------------------------
-# Run analysis
+# Analysis detail page
 # ---------------------------------------------------------------------------
-@app.route("/api/analyze", methods=["POST"])
-def api_analyze():
-    question = request.form.get("question", "").strip()
-    selected_raw = request.form.get("selected_ids", "")
-    selected_ids = [s.strip() for s in selected_raw.split(",") if s.strip()] if selected_raw else []
-    count = store.count()
+@app.route("/analysis/<anal_id>")
+def view_analysis(anal_id):
+    a = analysis_store.load(anal_id)
+    if not a:
+        return "Analysis not found", 404
+    return render_template("analysis_detail.html", analysis=a)
 
-    if count == 0:
-        return render_template("analyze.html", count=0,
-                               error="还没有实验记录，请先创建一些实验。")
 
-    if not selected_ids:
-        return render_template("analyze.html", count=count,
-                               error="请至少选择一个实验进行分析。")
-
-    llm = get_analyze_llm()
+# ---------------------------------------------------------------------------
+# Analysis child agent
+# ---------------------------------------------------------------------------
+@app.route("/api/analysis/<anal_id>/chat", methods=["POST"])
+def api_analysis_chat(anal_id):
+    """子 Agent 入口。空消息=打开面板(只加载上下文不跑LLM)；有消息=正常运行。"""
+    llm = get_agent_llm()
     if not llm:
-        return render_template("analyze.html", count=count,
-                               error="未配置 DeepSeek API Key。请点击导航栏的设置按钮配置 API Key。")
+        return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
 
-    summary = store.summarize_all(exp_ids=selected_ids)
-    if not question:
-        question = "请对你的所有实验进行全盘分析，找出趋势、矛盾和下一步方向。"
+    a = analysis_store.load(anal_id)
+    if not a:
+        return jsonify({"ok": False, "error": "分析报告不存在"}), 404
 
-    try:
-        analysis = analyze_experiments(summary, question, llm)
-        # Auto-save analysis
-        analysis_data = {
-            "timestamp": __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "question": question,
-            "selected_ids": selected_ids,
-            "analysis": analysis,
-        }
-        analysis_id = analysis_store.save(analysis_data)
-        return render_template("analyze.html", analysis=analysis, count=count,
-                               analysis_id=analysis_id)
-    except Exception as e:
-        return render_template("analyze.html", count=count,
-                               error=f"分析失败: {str(e)}")
+    data = request.get_json() or {}
+    user_message = (data.get("message") or "").strip()
+    state_dict = data.get("state")
+
+    # 查反向映射
+    idx = thread_store.get_index()
+    thread_id = idx.get("anal_to_thread", {}).get(anal_id)
+
+    # ---- 旧分析记录（无 thread_id）：懒迁移 ----
+    if not thread_id:
+        if not user_message and not state_dict:
+            # 首次打开 → 返回分析数据让前端展示，不跑 LLM
+            return jsonify({
+                "ok": True, "is_legacy": True,
+                "anal_data": {
+                    "id": a.get("id"), "question": a.get("question", ""),
+                    "timestamp": a.get("timestamp", ""),
+                    "selected_ids": a.get("selected_ids", []),
+                    "analysis": (a.get("analysis") or "")[:500],
+                },
+            })
+        # 有消息或 state → 执行懒迁移
+        thread_id = _migrate_legacy_analysis(anal_id, a)
+
+    # ---- 恢复已有子 Agent 状态 ----
+    if not state_dict:
+        disk_state = thread_store.load_child_state(thread_id)
+        if disk_state:
+            state_dict = disk_state
+
+    if state_dict:
+        agent = AgentLoop.from_dict(llm, store, state_dict,
+                                    thread_store=thread_store,
+                                    update_log_store=update_log_store,
+                                    favorites_store=favorites_store,
+                                    analysis_store=analysis_store)
+        if user_message:
+            result = agent.run(user_message)
+            return _make_analysis_chat_response(agent, result, thread_id)
+        else:
+            state = agent.state_to_dict()
+            thread_store.save_child_state(thread_id, state)
+            return jsonify({"ok": True, "state": state})
+
+    # ---- 首次打开：从线程文件创建分析子 Agent ----
+    thread = thread_store.load(thread_id)
+    if not thread:
+        return jsonify({"ok": False, "error": "线程不存在"}), 500
+
+    agent = _create_analysis_child_agent(llm, store, thread, anal_id)
+
+    if user_message:
+        result = agent.run(user_message)
+        return _make_analysis_chat_response(agent, result, thread_id)
+    else:
+        state = agent.state_to_dict()
+        thread_store.save_child_state(thread_id, state)
+        return jsonify({"ok": True, "state": state})
+
+
+def _create_analysis_child_agent(llm_client, store, thread, anal_id):
+    """从线程文件创建分析子 Agent。"""
+    from lib.agent_v2 import AgentLoop
+    agent = AgentLoop(llm_client, store,
+                      thread_store=thread_store,
+                      update_log_store=update_log_store,
+                      favorites_store=favorites_store,
+                      analysis_store=analysis_store)
+    # 注入线程历史消息
+    for m in thread.get("messages", []):
+        if m.get("role") != "system" or "[全局上下文]" not in (m.get("content") or ""):
+            agent.history.append(dict(m))
+    agent._child_agent_role = "analysis_reviewer"
+    agent._child_exp_id = anal_id  # 复用此字段传递 anal_id
+    agent._child_initial_history_len = len(agent.history)
+    agent.thread_id = thread.get("id")
+    agent.history.append({
+        "role": "system",
+        "content": (
+            "[系统状态] 你正在审阅/修改一份已完成的分析报告。"
+            "可用工具：load_reference（查看报告中引用的实验）、search_experiments、"
+            "read_update_log、modify_analysis（修改报告内容）。"
+            "修改报告时直接调用 modify_analysis 工具，会自动保存。"
+        )
+    })
+    return agent
+
+
+def _migrate_legacy_analysis(anal_id, analysis_data):
+    """为旧分析记录创建线程，返回 thread_id。"""
+    from datetime import datetime as dt
+    tid = thread_store.next_id()
+    now = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    messages = [
+        {"role": "system", "content": f"旧分析记录 {anal_id}，于 {now} 迁移至线程系统。"},
+        {"role": "user", "content": analysis_data.get("question", "")},
+        {"role": "assistant", "content": "（分析报告见系统消息）"},
+        {"role": "system", "content": f"[分析报告内容]\n{analysis_data.get('analysis', '')}"},
+    ]
+    thread = {
+        "id": tid, "type": "analyze", "status": "done",
+        "created": now, "updated": now,
+        "title": (analysis_data.get("question") or "分析")[:30],
+        "summary": f"迁移自旧分析记录 {anal_id}",
+        "anal_generated": anal_id,
+        "messages": messages, "branches": [],
+    }
+    thread_store.save(thread)
+    thread_store.update_index(thread)
+    return tid
+
+
+def _make_analysis_chat_response(agent, result, thread_id):
+    """构造分析子 Agent 的 HTTP 响应。"""
+    state = agent.state_to_dict()
+    if thread_id:
+        thread_store.save_child_state(thread_id, state)
+
+    if result.get("type") in ("extract", "generate"):
+        return jsonify({
+            "ok": True, "type": result["type"], "state": state,
+            "message": result.get("message", ""),
+        })
+    return jsonify({
+        "ok": True, "state": state,
+        "type": result.get("type", "reply"),
+        "message": result.get("message", ""),
+    })
 
 
 @app.route("/api/analysis-history")

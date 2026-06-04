@@ -284,7 +284,7 @@
 /* Chat panel */
 #chat-panel {
   display: flex; flex-direction: column;
-  height: 55vh; min-height: 350px;
+  height: 70vh; min-height: 420px;
   border: 1px solid #ddd; border-radius: 12px;
   overflow: hidden; background: var(--pico-card-background-color, #fff);
   transition: background-color 0.5s ease;
@@ -437,11 +437,18 @@
 .tc-charts { padding: 0.5rem 0.8rem; color: #888; font-style: italic; }
 
 /* Selector */
-.sel-card { border-left: 3px solid #f59e0b; }
-.sel-item { display: flex; gap: 0.4rem; align-items: center; padding: 0.3rem 0; cursor: pointer; flex-wrap: wrap; font-size: 0.82rem; }
-.sel-id { font-weight: 600; font-family: monospace; }
+.sel-card { border-left: 3px solid #f59e0b; overflow: hidden; }
+.sel-item { display: flex; gap: 0.4rem; align-items: center; padding: 0.3rem 0.4rem; cursor: pointer; flex-wrap: wrap; font-size: 0.82rem; border-bottom: 1px solid #f0f0f0; user-select: none; }
+.sel-item:last-child { border-bottom: none; }
+.sel-item:hover { background: #f8f8f8; }
+.sel-check { width: 20px; height: 20px; border: 2px solid #bbb; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: transparent; transition: all 0.15s; }
+.sel-check.checked { background: var(--pico-primary, #0071e3); border-color: var(--pico-primary, #0071e3); color: #fff; }
+.sel-id { font-weight: 600; font-family: monospace; min-width: 90px; }
 .sel-title { flex: 1; }
 .sel-date { color: #888; font-size: 0.75rem; }
+.sel-tags { display: flex; gap: 0.2rem; flex-wrap: wrap; }
+.tc-header-actions { padding: 0.3rem 0.8rem; display: flex; gap: 0.4rem; background: #fafafa; border-bottom: 1px solid #e8e8e8; }
+.tc-header-actions button { font-size: 0.7rem; padding: 0.15rem 0.5rem; }
 
 /* List */
 .list-card { border-left: 3px solid #0891b2; }
@@ -461,6 +468,9 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 
+{% include '_selector_styles.html' %}
+{% include '_selector_scripts.html' %}
+
 <script>
 // ---- Page state save/restore for navigation history ----
 window.savePageState = function() {
@@ -479,6 +489,7 @@ window.restorePageState = function(state) {
 // ---- Agent chat panel ----
 var _agentState = null;
 var _sending = false;
+var _isPageLoad = false;  // 页面加载标志，用于检测孤儿 selector (expired)
 
 function updateThreadColor(state) {
   var panel = document.getElementById('chat-panel');
@@ -500,18 +511,10 @@ function restoreAgentState() {
     var raw = sessionStorage.getItem('exdiary_agent_state');
     if (!raw) return false;
     _agentState = JSON.parse(raw);
-    // Rebuild chat UI from history
-    var container = document.getElementById('chat-messages');
-    var placeholder = container.querySelector('div[style]');
-    if (placeholder) placeholder.remove();
-    (_agentState.history || []).forEach(function(entry) {
-      if (entry.role === 'user') {
-        appendChat('user', entry.content);
-      } else if (entry.role === 'assistant') {
-        if (entry.content) appendChat('agent', entry.content);
-      }
-      // system / tool 消息不渲染到聊天 UI
-    });
+    // 全量重渲染（含 tool results、选择卡片等），并触发 expired 检测
+    _isPageLoad = true;
+    renderHistoryMsgs(_agentState.history || []);
+    _isPageLoad = false;
     updateProgress(_agentState.completeness || 0, _agentState.turn_count || 0);
     return true;
   } catch(e) {
@@ -561,7 +564,9 @@ async function startAgent() {
       appendChat('agent', data.message);
     }
     if (_agentState && _agentState.history) {
+      _isPageLoad = true;
       renderHistoryMsgs(_agentState.history);
+      _isPageLoad = false;
     }
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
@@ -590,7 +595,9 @@ function renderHistoryMsgs(history) {
   if (!container) return;
   // 先清空（避免重复渲染）
   container.innerHTML = '';
+  _renderedToolIds = {};  // 全量重渲染时重置去重表
   var lastUserMsg = null;
+  var lastAssistantContent = null;  // 去重：连续相同内容的 assistant 消息只渲染一次
   history.forEach(function(m) {
     if (_isInternalMsg(m)) return;
     if (m.role === 'user' && m.content) {
@@ -599,13 +606,17 @@ function renderHistoryMsgs(history) {
       container.appendChild(d);
       lastUserMsg = d;
     } else if (m.role === 'assistant' && m.content) {
+      // 跳过与上一条 assistant 内容完全相同的消息（LLM 错误重试产生的重复文本）
+      if (lastAssistantContent === m.content) return;
+      lastAssistantContent = m.content;
       var d2 = document.createElement('div'); d2.className = 'chat-msg agent';
       d2.innerHTML = '<div class="chat-avatar">&#x1F9EA;</div><div class="chat-bubble">' + (typeof marked !== 'undefined' ? marked.parse(m.content) : escHtml(m.content)) + '</div>';
       container.appendChild(d2);
     } else if (m.role === 'tool' && m.content && _shouldRenderToolResult(m.content)) {
-      renderToolResult(m.content, '');
+      renderToolResult(m.content, '', m.tool_call_id);
     }
   });
+  _renderedHistoryLen = history.length;
   if (container.lastChild) container.lastChild.scrollIntoView({behavior:'smooth'});
 }
 
@@ -631,10 +642,14 @@ async function sendMessage() {
 
     if (!data.ok) {
       appendChat('agent', '处理失败: ' + (data.error || '未知错误'));
+      _sending = false;
+      document.getElementById('btn-send').disabled = false;
       return;
     }
     _agentState = data.state;
     updateThreadColor(data.state);
+    // 增量渲染 history 中未渲染的工具结果卡片
+    renderNewToolResults(data.state);
     if (data.message != null) {
       appendChat('agent', data.message);
     }
@@ -1382,14 +1397,39 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+var _renderedHistoryLen = 0;
+var _renderedToolIds = {};  // 已渲染的 tool_call_id → true，防止重复渲染
+
+function renderNewToolResults(state) {
+  if (!state || !state.history) return;
+  var container = document.getElementById('chat-messages');
+  if (!container) return;
+  for (var i = _renderedHistoryLen; i < state.history.length; i++) {
+    var m = state.history[i];
+    if (m.role === 'tool' && m.content && _shouldRenderToolResult(m.content)) {
+      // 防止 tool 卡片重复渲染：同一个 tool_call_id 只渲染一次
+      if (_renderedToolIds[m.tool_call_id]) continue;
+      _renderedToolIds[m.tool_call_id] = true;
+      renderToolResult(m.content, '', m.tool_call_id);
+    }
+  }
+  _renderedHistoryLen = state.history.length;
+}
+
+function scrollChat() {
+  var container = document.getElementById('chat-messages');
+  if (container) { container.scrollTop = container.scrollHeight; }
+}
+
 // ===== Tool Result Renderer =====
 var _renderedMsgs = new WeakSet();
-function renderToolResult(content, toolName) {
+function renderToolResult(content, toolName, toolCallId) {
   try { var r = typeof content === 'string' ? JSON.parse(content) : content; }
   catch(e) { return appendSystemMsg('[工具结果]'); }
   if (!r || !r.display) return;
 
   var html = '';
+  var tcIdAttr = toolCallId ? ' data-tool-call-id="'+escHtml(toolCallId)+'"' : '';
   switch(r.display) {
     case 'diff':
       html = '<div class="tool-card diff-card"><div class="tc-header">&#x270F; 修改了实验</div><div class="tc-body">';
@@ -1409,11 +1449,94 @@ function renderToolResult(content, toolName) {
       html += '</div>';
       break;
     case 'selector':
-      html = '<div class="tool-card sel-card" data-tool="selector"><div class="tc-header">'+escHtml(r.title||'选择实验')+'</div><div class="tc-body">';
-      (r.items||[]).forEach(function(item) {
-        html += '<label class="sel-item"><input type="checkbox" value="'+escHtml(item.id)+'"><span class="sel-id">'+escHtml(item.id)+'</span> <span class="sel-title">'+escHtml(item.title||'')+'</span> <span class="sel-date">'+(item.date||'')+'</span></label>';
-      });
-      html += '</div><div class="tc-actions"><button onclick="confirmSelector(this)" class="outline">确认选择</button></div></div>';
+      // -- v3 选择卡片：顶部栏 + 列表 + 底部栏 --
+      var items = r.items || [];
+      var preselected = r.preselected || [];
+      var maxVisible = 8;
+      var isExpired = (typeof _isPageLoad !== 'undefined' && _isPageLoad && !r.status);
+      var isConfirmed = (r.status === 'confirmed');
+      var isCancelled = (r.status === 'cancelled');
+
+      if (isExpired) {
+        // 孤儿 selector → 渲染为 expired，注入取消
+        html = '<div class="tool-card sel-card" data-tool="selector" data-status="expired"'+tcIdAttr+'>';
+        html += '<div class="sel-status-text expired-warn">&#x26A0; 之前的实验选择已过期</div>';
+        html += '<div class="sel-status-text cancelled">已自动取消</div></div>';
+        // 注入取消到 history
+        if (toolCallId && _agentState) {
+          for (var i2 = _agentState.history.length - 1; i2 >= 0; i2--) {
+            var m2 = _agentState.history[i2];
+            if (m2.role === 'tool' && m2.tool_call_id === toolCallId) {
+              try {
+                var orig2 = JSON.parse(typeof m2.content === 'string' ? m2.content : '{}');
+                orig2.status = 'cancelled';
+                m2.content = JSON.stringify(orig2);
+              } catch(e2) {}
+              break;
+            }
+          }
+          saveAgentState();
+          lockInput(false);  // 解锁：上一会话可能在等待选择时被中断
+        }
+      } else if (isConfirmed) {
+        // 已确认 → 显示结果
+        var selIds = r.selected_ids || [];
+        html = '<div class="tool-card sel-card" data-tool="selector" data-status="confirmed"'+tcIdAttr+'>';
+        html += '<div class="sel-status-text confirmed">已选择 ' + selIds.length + ' 个实验: ' + selIds.join(', ') + '</div></div>';
+      } else if (isCancelled) {
+        // 已取消 → 显示结果
+        html = '<div class="tool-card sel-card" data-tool="selector" data-status="cancelled"'+tcIdAttr+'>';
+        html += '<div class="sel-status-text cancelled">已取消选择</div></div>';
+      } else {
+        // 活跃卡片
+        html = '<div class="tool-card sel-card" data-tool="selector" data-status="active"'+tcIdAttr+'>';
+        // 顶部栏
+        html += '<div class="sel-topbar">';
+        html += '<span>&#x1F4CB; 选择要分析的实验</span>';
+        html += '<button onclick="selToggleBtn(this)">&#x2611; 全选</button>';
+        html += '</div>';
+        // 实验列表
+        html += '<div class="sel-body">';
+        var visibleItems = items.slice(0, maxVisible);
+        visibleItems.forEach(function(item) {
+          var selClass = preselected.indexOf(item.id) >= 0 ? ' checked' : '';
+          html += '<div class="sel-item" data-exp-id="'+escHtml(item.id)+'" onclick="selRowClick(this)">';
+          html += '<span class="sel-check'+selClass+'">&#x2713;</span>';
+          html += '<div class="sel-info">';
+          html += '<div class="si-id">'+escHtml(item.id)+'</div>';
+          html += '<div class="si-title">'+escHtml(item.title||'')+'</div>';
+          html += '<div class="si-meta">'+(item.date||'')+' '+(item.experimenter||'')+'</div>';
+          html += '</div></div>';
+        });
+        // "查看更多"按钮
+        if (items.length > maxVisible) {
+          html += '<button class="sel-more" onclick="selShowMoreBtn(this)" data-all-items=\''+JSON.stringify(items)+'\'>&#x25BC; 查看更多实验 (共 '+items.length+' 个)</button>';
+        }
+        html += '</div>';
+        // 底部栏
+        var preCount = preselected.length;
+        html += '<div class="sel-bottombar">';
+        html += '<span class="sel-count">已选 <b>'+preCount+'</b> 个</span>';
+        html += '<span class="sel-actions">';
+        html += '<button onclick="cancelSelector(this)" class="sel-btn-cancel">取消</button>';
+        html += '<button onclick="confirmSelector(this)" class="sel-btn-confirm">确认选择 ('+preCount+')</button>';
+        html += '</span></div></div>';
+        // 锁定输入，等待用户选择
+        lockInput(true);
+      }
+      break;
+    case 'analysis_done':
+      html = '<div class="tool-card report-card">';
+      html += '<div class="tc-header">&#x2705; 分析完成</div>';
+      html += '<div class="tc-body"><strong>'+escHtml(r.anal_id||'')+'</strong> &mdash; '+escHtml(r.title||'')+'</div>';
+      html += '<div class="tc-body" style="color:var(--pico-muted-color);font-size:0.85rem">'+escHtml(r.summary||'')+'</div>';
+      if (r.refs && r.refs.length) {
+        html += '<div class="tc-footer">关联实验: ';
+        r.refs.forEach(function(id) { html += '<a href="/experiments/'+id+'">'+id+'</a> '; });
+        html += '</div>';
+      }
+      html += '<div class="tc-footer"><a href="/analysis/'+escHtml(r.anal_id||'')+'">查看完整报告 &rarr;</a></div>';
+      html += '</div>';
       break;
     case 'toast':
       showToast(r.message); return;
@@ -1461,17 +1584,24 @@ function hideAnalyzing() {
   if (div) div.style.display = 'none';
 }
 
-function confirmSelector(btn) {
-  var card = btn.closest('.sel-card');
-  var checked = card.querySelectorAll('input:checked');
-  var ids = Array.from(checked).map(function(cb) { return cb.value; });
-  if (!ids.length) return;
-  card.querySelector('.tc-actions').innerHTML = '<span>已选择 '+ids.length+' 个实验</span>';
-  // Send as next user message
+var _waitingForSelector = false;
+
+function lockInput(lock) {
+  _waitingForSelector = lock;
   var input = document.getElementById('chat-input');
-  input.value = '已选择: '+ids.join(', ')+'。请继续。';
-  document.getElementById('btn-send').click();
+  var btn = document.getElementById('btn-send');
+  if (lock) {
+    input.disabled = true;
+    input.placeholder = '请勾选实验后点击确认...';
+    btn.disabled = true;
+  } else {
+    input.disabled = false;
+    input.placeholder = '描述你的实验...';
+    btn.disabled = false;
+  }
 }
+
+// 选择卡片交互函数已移至 _selector_scripts.html
 
 // ===== Schema Status =====
 function renderSchemaStatus(content) {

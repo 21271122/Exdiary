@@ -427,7 +427,7 @@ button.row-del:hover { background: #fce4e4 !important; }
 </details>
 
 {# ===== 引用关系 ===== #}
-{% if exp.references or exp.referenced_by %}
+{% if exp.references or exp.referenced_by or exp.analyzed_in %}
 <div style="margin-top:2rem;padding:1rem;background:var(--pico-card-background-color);border-radius:8px;border:1px solid #e0e0e0">
   <details class="section-group" open>
     <summary>&#x1f517; 实验引用关系</summary>
@@ -442,11 +442,21 @@ button.row-del:hover { background: #fce4e4 !important; }
     </div>
     {% endif %}
     {% if exp.referenced_by %}
-    <div>
+    <div style="margin-bottom:0.8rem">
       <strong style="font-size:0.85rem">被以下实验引用：</strong>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
         {% for ref_id in exp.referenced_by %}
         <a href="/experiments/{{ ref_id }}" class="tag-pill" style="text-decoration:none;background:#f0f0f0;color:#333;border:1px solid #ccc">{{ ref_id }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if exp.analyzed_in %}
+    <div>
+      <strong style="font-size:0.85rem">被以下分析引用：</strong>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
+        {% for anal_id in exp.analyzed_in %}
+        <a href="/analysis/{{ anal_id }}" class="tag-pill" style="text-decoration:none;background:#fef3c7;color:#92400e;border:1px solid #f59e0b">{{ anal_id }}</a>
         {% endfor %}
       </div>
     </div>
