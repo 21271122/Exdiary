@@ -1,243 +1,40 @@
 {% extends "base.html" %}
 {% block title %}{{ exp.title or exp.id }}{% endblock %}
 {% block page_id %}experiment-detail{% endblock %}
+{% block page_bg %}background-color: #fdf2f2;{% endblock %}
+{% block topbar_style %}
+.topbar { background: var(--red); }
+.topbar-back { background: var(--white); color: var(--red); border-color: var(--white); }
+.topbar-back:hover { background: var(--red); color: var(--white); }
+{% endblock %}
 {% block content %}
 
 <style>
-/* ---- Dashed-border editable text (edit mode) ---- */
 .editable-dashed {
-  border: 2px solid transparent;
-  border-radius: 4px;
-  padding: 2px 6px;
-  cursor: pointer;
-  transition: background 0.2s;
-  display: inline-block;
-  position: relative;
-  overflow: visible;
+  display: inline-block; padding: 2px 6px; cursor: pointer; position: relative; overflow: visible;
+  border: 2px dashed var(--black);
 }
-.editable-dashed:hover {
-  background: rgba(0,115,230,0.05);
-}
-.editable-dashed.block {
-  display: block;
-  width: 100%;
-  padding: 0.5rem;
-}
-/* SVG marching-dash overlay */
-.dash-svg {
-  position: absolute;
-  top: 0; left: 0;
-  pointer-events: none;
-  z-index: 1;
-}
+.editable-dashed:hover { background: var(--off-white); }
+.editable-dashed.block { display: block; width: 100%; padding: 0.5rem; }
+.dash-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
 
-/* Tag jitter in edit mode */
 @keyframes tag-jitter {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  25%  { transform: translate(-0.25px, 0.2px) rotate(-0.1deg); }
-  50%  { transform: translate(0.2px, -0.25px) rotate(0.1deg); }
-  75%  { transform: translate(0.25px, 0.15px) rotate(-0.06deg); }
+  0%,100%{transform:translate(0,0)rotate(0deg)}
+  25%{transform:translate(-0.25px,0.2px)rotate(-0.1deg)}
+  50%{transform:translate(0.2px,-0.25px)rotate(0.1deg)}
+  75%{transform:translate(0.25px,0.15px)rotate(-0.06deg)}
 }
-.tag-pill.tag-jitter {
-  animation: tag-jitter 0.25s ease-in-out infinite;
-}
+.tag-pill.tag-jitter { animation: tag-jitter 0.25s ease-in-out infinite; }
 
-/* Status slider — compact loop row with per-status colors */
-.status-slider {
-  display: flex;
-  gap: 3px;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
-  padding: 4px 6px;
-  max-width: 147px;
-  border-radius: 16px;
-  border: 2px solid #ccc;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  transition: background 0.3s, border-color 0.3s;
-}
-.status-slider::-webkit-scrollbar { display: none; }
-.status-slider .status-option {
-  scroll-snap-align: center;
-  flex-shrink: 0;
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 0.72em;
-  font-weight: 600;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-  white-space: nowrap;
-  user-select: none;
-}
-/* planned */
-.status-slider .status-option[data-value="planned"] { background: #fff3cd; color: #856404; }
-.status-slider .status-option[data-value="planned"].selected { background: #856404; color: #fff; }
-/* running */
-.status-slider .status-option[data-value="running"] { background: #cce5ff; color: #004085; }
-.status-slider .status-option[data-value="running"].selected { background: #004085; color: #fff; }
-/* done */
-.status-slider .status-option[data-value="done"] { background: #d4edda; color: #155724; }
-.status-slider .status-option[data-value="done"].selected { background: #155724; color: #fff; }
-/* failed */
-.status-slider .status-option[data-value="failed"] { background: #f8d7da; color: #721c24; }
-.status-slider .status-option[data-value="failed"].selected { background: #721c24; color: #fff; }
-/* repeated */
-.status-slider .status-option[data-value="repeated"] { background: #e2d9f3; color: #5a3d7a; }
-.status-slider .status-option[data-value="repeated"].selected { background: #5a3d7a; color: #fff; }
-
-.status-slider .status-option:hover {
-  filter: brightness(0.92);
-}
-
-/* Row-delete button */
-button.row-del { color: #e53935 !important; border-color: #e53935 !important; }
-button.row-del:hover { background: #fce4e4 !important; }
-
-/* Date input in modal */
-.edit-modal-date {
-  width: 100%;
-  padding: 0.6rem;
-  font-size: 0.95rem;
-  border: 2px solid #ccc;
-  border-radius: 6px;
-  font-family: inherit;
-}
-.edit-modal-date:focus {
-  border-color: var(--pico-primary);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(0,115,230,0.1);
-}
-
-/* ---- Edit Modal ---- */
-.edit-modal-overlay {
-  display: none;
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: 1000;
-  justify-content: center;
-  align-items: center;
-  padding: 1rem;
-}
-.edit-modal-overlay.active {
-  display: flex;
-}
-.edit-modal-box {
-  background: #fff;
-  border-radius: 12px;
-  padding: 1.5rem;
-  max-width: 580px;
-  width: 92%;
-  max-height: 85vh;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.3);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-.edit-modal-label {
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--pico-muted-color);
-}
-.edit-modal-toolbar {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 0.5rem;
-  padding: 6px 8px;
-  background: #f5f5f5;
-  border-radius: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.edit-modal-toolbar button {
-  width: 30px;
-  height: 28px;
-  border: 1px solid transparent;
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #444;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.12s;
-}
-.edit-modal-toolbar button:hover {
-  background: #e0e0e0;
-  border-color: #ccc;
-}
-.edit-modal-toolbar button:active {
-  background: #d0d0d0;
-}
-.edit-modal-toolbar .tb-sep {
-  width: 1px;
-  height: 18px;
-  background: #ccc;
-  margin: 0 4px;
-}
-.edit-modal-input {
-  width: 100%;
-  padding: 0.6rem;
-  font-size: 0.95rem;
-  border: 2px solid #ccc;
-  border-radius: 6px;
-  font-family: inherit;
-  line-height: 1.6;
-  resize: vertical;
-  min-height: 3em;
-}
-.edit-modal-input:focus {
-  border-color: var(--pico-primary);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(0,115,230,0.1);
-}
-.edit-modal-rich {
-  width: 100%;
-  padding: 0.6rem;
-  font-size: 0.95rem;
-  border: 2px solid #ccc;
-  border-radius: 6px;
-  font-family: inherit;
-  line-height: 1.6;
-  min-height: 10em;
-  max-height: 55vh;
-  overflow-y: auto;
-  outline: none;
-  background: #fff;
-}
-.edit-modal-rich:focus {
-  border-color: var(--pico-primary);
-  box-shadow: 0 0 0 3px rgba(0,115,230,0.1);
-}
-.edit-modal-rich p { margin: 0 0 0.5em 0; }
-.edit-modal-rich ul, .edit-modal-rich ol { margin: 0.3em 0; padding-left: 1.5em; }
-.edit-modal-rich blockquote {
-  margin: 0.3em 0;
-  padding-left: 0.8em;
-  border-left: 3px solid #ccc;
-  color: #666;
-}
-.edit-modal-actions {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-  margin-top: 1rem;
-}
+button.row-del { color: var(--red) !important; border-color: var(--red) !important; }
+button.row-del:hover { background: var(--red) !important; color: var(--white) !important; }
 </style>
 
-{# ===== Jinja2 Macros ===== #}
+{# Macros #}
 {% macro table_view(rows, headers, keys) %}
 <table class="academic-table">
   <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
-  <tbody>
-  {% for row in rows %}
-  <tr>{% for k in keys %}<td>{{ row.get(k, '') if row is mapping else '' }}</td>{% endfor %}</tr>
-  {% endfor %}
-  </tbody>
+  <tbody>{% for row in rows %}<tr>{% for k in keys %}<td>{{ row.get(k, '') if row is mapping else '' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
 </table>
 {% endmacro %}
 
@@ -247,15 +44,12 @@ button.row-del:hover { background: #fce4e4 !important; }
   <tbody>
   {% for row in rows %}
   <tr data-row="{{ loop.index0 }}">
-    {% for k in keys %}
-    <td><span class="editable-dashed" data-table="{{ name }}" data-row="{{ loop.index0 }}" data-key="{{ k }}" data-label="{{ headers[loop.index0] }}" data-type="textarea" style="display:block;min-width:60px;min-height:1.2em">{{ row.get(k, '') if row is mapping else '' }}</span></td>
-    {% endfor %}
-    <td style="width:2em"><button class="outline secondary row-del" style="font-size:0.7rem;padding:0 0.3rem" onclick="this.closest('tr').remove()">&#x2716;</button></td>
-  </tr>
-  {% endfor %}
+    {% for k in keys %}<td><span class="editable-dashed" data-table="{{ name }}" data-row="{{ loop.index0 }}" data-key="{{ k }}" data-label="{{ headers[loop.index0] }}" data-type="textarea" style="display:block;min-width:60px;min-height:1.2em">{{ row.get(k, '') if row is mapping else '' }}</span></td>{% endfor %}
+    <td style="width:2em"><button class="outline row-del" style="font-size:0.7rem;padding:0 0.3rem" onclick="this.closest('tr').remove()">X</button></td>
+  </tr>{% endfor %}
   </tbody>
 </table>
-<button class="outline secondary" style="font-size:0.75rem;margin-top:0.3rem" onclick='addTableRow("{{ name }}", {{ keys | tojson }}, {{ headers | tojson }})'>+ 添加行</button>
+<button class="outline" style="font-size:0.75rem;margin-top:0.3rem" onclick='addTableRow("{{ name }}", {{ keys | tojson }}, {{ headers | tojson }})'>+ Add Row</button>
 {% endmacro %}
 
 {% macro array_edit(name, items) %}
@@ -263,11 +57,10 @@ button.row-del:hover { background: #fce4e4 !important; }
   {% for item in items %}
   <li style="display:flex;gap:0.3rem;align-items:center;margin-bottom:0.3rem">
     <span class="editable-dashed" data-array="{{ name }}" data-index="{{ loop.index0 }}" data-type="textarea" data-label="{{ name }}" style="flex:1;min-height:1.2em">{{ item }}</span>
-    <button class="outline secondary row-del" style="font-size:0.7rem;padding:0 0.3rem;flex-shrink:0" onclick="this.closest('li').remove()">&#x2716;</button>
-  </li>
-  {% endfor %}
+    <button class="outline row-del" style="font-size:0.7rem;padding:0 0.3rem;flex-shrink:0" onclick="this.closest('li').remove()">X</button>
+  </li>{% endfor %}
 </ul>
-<button class="outline secondary" style="font-size:0.75rem;margin-top:0.3rem" onclick="addArrayItem('{{ name }}')">+ 添加</button>
+<button class="outline" style="font-size:0.75rem;margin-top:0.3rem" onclick="addArrayItem('{{ name }}')">+ Add</button>
 {% endmacro %}
 
 {% macro text_field(id, label, value, open) %}
@@ -282,181 +75,160 @@ button.row-del:hover { background: #fce4e4 !important; }
 {% endif %}
 {% endmacro %}
 
-
 {# ===== Page Content ===== #}
-
 <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem">
   <div>
-    <small style="color:var(--pico-muted-color)">{{ exp.id }}</small>
-    <h1 style="margin:0" id="field-title">{{ exp.title or '(无标题)' }}</h1>
-    <small style="color:var(--pico-muted-color);display:block;margin-top:0.1em">
+    <small style="font-weight:700;font-size:0.75rem;opacity:0.5;letter-spacing:1px">{{ exp.id }}</small>
+    <h1 style="margin:0;border-bottom:none;padding-bottom:0" id="field-title">{{ exp.title or '(untitled)' }}</h1>
+    <small style="font-weight:700;font-size:0.75rem;opacity:0.5;display:block;margin-top:0.1em;letter-spacing:1px">
       <span id="field-date-range">{{ exp.date }}{% if exp.end_date %} ~ {{ exp.end_date }}{% endif %}</span>
-      &middot; <span id="field-experimenter">{{ exp.experimenter or '佚名' }}</span>
+      &middot; <span id="field-experimenter">{{ exp.experimenter or 'Anon' }}</span>
     </small>
   </div>
-  <div style="display:flex;gap:0.5rem;align-items:center">
+  <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
     <span class="status-badge status-{{ exp.status }}" id="field-status" data-value="{{ exp.status }}">{{ exp.status }}</span>
-    <button id="btn-child" class="outline" style="font-size:0.8rem;padding:0.2rem 0.6rem" onclick="openChildAgent()">&#x1f4ac; 对话修改</button>
-    <button id="btn-edit" class="outline" style="font-size:0.8rem;padding:0.2rem 0.6rem" onclick="toggleEdit()">编辑</button>
-    <button id="btn-save" style="font-size:0.8rem;padding:0.2rem 0.6rem;display:none" onclick="saveEdit()">保存</button>
-    <button id="btn-cancel" class="outline secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem;display:none" onclick="cancelEdit()">取消</button>
-    <button class="outline secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem"
-            onclick="window.open('/experiments/{{ exp.id }}/print', '_blank')">&#x1f5a8; PDF</button>
-    <button class="outline secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem"
-            onclick="delExp('{{ exp.id }}')">删除</button>
+    <button id="btn-child" class="outline" style="font-size:0.75rem;padding:0.25rem 0.6rem" onclick="openChildAgent()">Chat Edit</button>
+    <button id="btn-edit" class="outline" style="font-size:0.75rem;padding:0.25rem 0.6rem" onclick="toggleEdit()">Edit</button>
+    <button id="btn-save" style="font-size:0.75rem;padding:0.25rem 0.6rem;display:none" onclick="saveEdit()">Save</button>
+    <button id="btn-cancel" class="outline" style="font-size:0.75rem;padding:0.25rem 0.6rem;display:none" onclick="cancelEdit()">Cancel</button>
+    <button class="outline" style="font-size:0.75rem;padding:0.25rem 0.6rem" onclick="window.open('/experiments/{{ exp.id }}/print', '_blank')">PDF</button>
+    <button class="outline danger" style="font-size:0.75rem;padding:0.25rem 0.6rem" onclick="delExp('{{ exp.id }}')">Delete</button>
   </div>
 </div>
 
 {% if exp.tags %}
 <div style="margin-bottom:1rem" id="field-tags-container">
-  {% for tag in exp.tags %}
-  <span class="tag-pill" ondblclick="editTag(this)">{{ tag }}</span>
-  {% endfor %}
+  {% for tag in exp.tags %}<span class="tag-pill" ondblclick="editTag(this)">{{ tag }}</span>{% endfor %}
 </div>
 {% endif %}
 
-<!-- ===== 0. Original Notes ===== -->
+{# 0. Original Notes #}
 {% if exp.original_notes %}
 {% set is_html = '<' in (exp.original_notes or '') %}
 <details class="section-group" id="section-original-notes">
-  <summary>&#x1f4dd; 原始实验笔记</summary>
+  <summary>0. Original Notes</summary>
   <div class="view-mode">
-    {% if is_html %}
-    <div class="rich-notes">{{ exp.original_notes | safe }}</div>
-    {% else %}
-    <div class="markdown-content" style="background:var(--pico-card-background-color);padding:1rem;border-radius:6px">{{ exp.original_notes }}</div>
-    {% endif %}
+    {% if is_html %}<div class="rich-notes">{{ exp.original_notes | safe }}</div>
+    {% else %}<div class="markdown-content" style="background:var(--off-white);padding:1rem;border:3px solid var(--black)">{{ exp.original_notes }}</div>{% endif %}
   </div>
   <div class="edit-mode" style="display:none">
     {% if is_html %}
-    <div class="editable-dashed block rich-notes" data-field="original_notes" data-label="原始实验笔记" data-type="html" data-value="{{ exp.original_notes | e }}">{{ exp.original_notes | safe }}</div>
+    <div class="editable-dashed block rich-notes" data-field="original_notes" data-label="Original Notes" data-type="html" data-value="{{ exp.original_notes | e }}">{{ exp.original_notes | safe }}</div>
     {% else %}
-    <div class="editable-dashed block" data-field="original_notes" data-label="原始实验笔记" data-type="textarea" style="white-space:pre-wrap;background:var(--pico-card-background-color);padding:1rem;border-radius:6px">{{ exp.original_notes }}</div>
+    <div class="editable-dashed block" data-field="original_notes" data-label="Original Notes" data-type="textarea" style="white-space:pre-wrap;background:var(--off-white);padding:1rem;border:3px solid var(--black)">{{ exp.original_notes }}</div>
     {% endif %}
-    <button id="btn-regenerate" style="margin-top:0.5rem" onclick="regenerate('{{ exp.id }}')">&#x1f504; 根据修改后的笔记重新生成实验记录</button>
-    <span id="regen-status" style="margin-left:0.5rem;color:var(--pico-muted-color)"></span>
+    <button id="btn-regenerate" style="margin-top:0.5rem" onclick="regenerate('{{ exp.id }}')">Regenerate from Notes</button>
+    <span id="regen-status" style="margin-left:0.5rem;font-weight:700;opacity:0.5"></span>
   </div>
 </details>
 {% endif %}
 
-{{ text_field("purpose", "1. 目的 / 科学问题", exp.purpose, true) }}
+{{ text_field("purpose", "1. Purpose", exp.purpose, true) }}
 
-<details class="section-group">
-  <summary>2. 材料与试剂</summary>
-  <div class="view-mode">{{ table_view(exp.materials or [], ["名称","纯度/规格","厂家/批号","用量","备注"], ["name","purity","vendor","amount","notes"]) }}</div>
-  <div class="edit-mode" style="display:none">{{ table_edit("materials", exp.materials or [], ["name","purity","vendor","amount","notes"], ["名称","纯度/规格","厂家/批号","用量","备注"]) }}</div>
+<details class="section-group"><summary>2. Materials</summary>
+  <div class="view-mode">{{ table_view(exp.materials or [], ["Name","Purity","Vendor","Amount","Notes"], ["name","purity","vendor","amount","notes"]) }}</div>
+  <div class="edit-mode" style="display:none">{{ table_edit("materials", exp.materials or [], ["name","purity","vendor","amount","notes"], ["Name","Purity","Vendor","Amount","Notes"]) }}</div>
 </details>
 
-<details class="section-group">
-  <summary>3. 仪器设备</summary>
-  <div class="view-mode">{{ table_view(exp.equipment or [], ["设备","型号","编号/位置"], ["device","model","location"]) }}</div>
-  <div class="edit-mode" style="display:none">{{ table_edit("equipment", exp.equipment or [], ["device","model","location"], ["设备","型号","编号/位置"]) }}</div>
+<details class="section-group"><summary>3. Equipment</summary>
+  <div class="view-mode">{{ table_view(exp.equipment or [], ["Device","Model","Location"], ["device","model","location"]) }}</div>
+  <div class="edit-mode" style="display:none">{{ table_edit("equipment", exp.equipment or [], ["device","model","location"], ["Device","Model","Location"]) }}</div>
 </details>
 
-<details class="section-group">
-  <summary>4. 实验方案</summary>
-  <div class="view-mode">{{ table_view(exp.experimental_plan or [], ["组别","变量条件","预期结果"], ["group","condition","expected"]) }}</div>
-  <div class="edit-mode" style="display:none">{{ table_edit("experimental_plan", exp.experimental_plan or [], ["group","condition","expected"], ["组别","变量条件","预期结果"]) }}</div>
+<details class="section-group"><summary>4. Experimental Plan</summary>
+  <div class="view-mode">{{ table_view(exp.experimental_plan or [], ["Group","Condition","Expected"], ["group","condition","expected"]) }}</div>
+  <div class="edit-mode" style="display:none">{{ table_edit("experimental_plan", exp.experimental_plan or [], ["group","condition","expected"], ["Group","Condition","Expected"]) }}</div>
 </details>
 
-<details class="section-group" open>
-  <summary>5. 操作步骤</summary>
+<details class="section-group" open><summary>5. SOP</summary>
   <div class="view-mode"><ol id="sop-list">{% for s in (exp.sop or []) %}<li>{{ s }}</li>{% endfor %}</ol></div>
   <div class="edit-mode" style="display:none">{{ array_edit("sop", exp.sop or []) }}</div>
 </details>
 
-<details class="section-group">
-  <summary>6. 过程参数记录</summary>
-  <div class="view-mode">{{ table_view(exp.process_parameters or [], ["步骤","参数","设定值","实际值","偏差说明"], ["step","parameter","setpoint","actual","deviation"]) }}</div>
-  <div class="edit-mode" style="display:none">{{ table_edit("process_parameters", exp.process_parameters or [], ["step","parameter","setpoint","actual","deviation"], ["步骤","参数","设定值","实际值","偏差说明"]) }}</div>
+<details class="section-group"><summary>6. Process Parameters</summary>
+  <div class="view-mode">{{ table_view(exp.process_parameters or [], ["Step","Parameter","Setpoint","Actual","Deviation"], ["step","parameter","setpoint","actual","deviation"]) }}</div>
+  <div class="edit-mode" style="display:none">{{ table_edit("process_parameters", exp.process_parameters or [], ["step","parameter","setpoint","actual","deviation"], ["Step","Parameter","Setpoint","Actual","Deviation"]) }}</div>
 </details>
 
 {% set obs = exp.observations or {} %}
 <details class="section-group" {% if obs is mapping and not obs.no_anomalies %}open{% endif %}>
-  <summary>7. 异常与观察</summary>
+  <summary>7. Observations</summary>
   <div class="view-mode">
     {% if obs is mapping %}
-      {% if obs.no_anomalies %}<p>&#x2705; 无异常</p>{% endif %}
+      {% if obs.no_anomalies %}<p style="font-weight:700">No anomalies</p>{% endif %}
       {% if obs["items"] %}<ul>{% for item in obs["items"] %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
     {% else %}<div class="markdown-content">{{ obs }}</div>{% endif %}
   </div>
   <div class="edit-mode" style="display:none">
-    <label><input type="checkbox" id="edit-observations-no_anomalies" {% if obs is mapping and obs.no_anomalies %}checked{% endif %}> 无异常</label>
+    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer"><input type="checkbox" id="edit-observations-no_anomalies" {% if obs is mapping and obs.no_anomalies %}checked{% endif %} style="width:auto"> No anomalies</label>
     {{ array_edit("observations_items", obs["items"] if obs is mapping and obs["items"] else []) }}
   </div>
 </details>
 
-<details class="section-group">
-  <summary>8. 表征计划</summary>
-  <div class="view-mode">{{ table_view(exp.characterization or [], ["测试方法","样品编号","制样方式","送测日期","数据文件路径"], ["method","sample_id","preparation","submission_date","data_path"]) }}</div>
-  <div class="edit-mode" style="display:none">{{ table_edit("characterization", exp.characterization or [], ["method","sample_id","preparation","submission_date","data_path"], ["测试方法","样品编号","制样方式","送测日期","数据文件路径"]) }}</div>
+<details class="section-group"><summary>8. Characterization</summary>
+  <div class="view-mode">{{ table_view(exp.characterization or [], ["Method","Sample ID","Preparation","Date","Data Path"], ["method","sample_id","preparation","submission_date","data_path"]) }}</div>
+  <div class="edit-mode" style="display:none">{{ table_edit("characterization", exp.characterization or [], ["method","sample_id","preparation","submission_date","data_path"], ["Method","Sample ID","Preparation","Date","Data Path"]) }}</div>
 </details>
 
 {% set r = exp.results or {} %}
-<details class="section-group" open>
-  <summary>9. 结果与数据分析</summary>
+<details class="section-group" open><summary>9. Results</summary>
   <div class="view-mode">
     {% if r is mapping %}
-      {% if r.qualitative %}<h4>定性观察</h4><div class="markdown-content">{{ r.qualitative }}</div>{% endif %}
-      {% if r.key_data %}<h4>关键数据</h4>{{ table_view(r.key_data, ["指标","值","对比组值","变化"], ["metric","value","comparison","change"]) }}{% endif %}
-      {% if r.figures %}<h4>图表索引</h4>{{ table_view(r.figures, ["图表","文件路径","一句话结论"], ["figure","path","conclusion"]) }}{% endif %}
+      {% if r.qualitative %}<h4>Qualitative</h4><div class="markdown-content">{{ r.qualitative }}</div>{% endif %}
+      {% if r.key_data %}<h4>Key Data</h4>{{ table_view(r.key_data, ["Metric","Value","Comparison","Change"], ["metric","value","comparison","change"]) }}{% endif %}
     {% else %}<div class="markdown-content">{{ r }}</div>{% endif %}
   </div>
   <div class="edit-mode" style="display:none">
-    <label>定性观察</label>
-    <div class="editable-dashed block markdown-content" data-field="results_qualitative" data-label="定性观察" data-type="markdown" data-value="{{ (r.qualitative if r is mapping else '') | e }}">{{ r.qualitative if r is mapping else '' }}</div>
-    <label style="margin-top:0.5rem">关键数据</label>
-    {{ table_edit("results_key_data", r.key_data if r is mapping and r.key_data else [], ["metric","value","comparison","change"], ["指标","值","对比组值","变化"]) }}
-    <label style="margin-top:0.5rem">图表索引</label>
-    {{ table_edit("results_figures", r.figures if r is mapping and r.figures else [], ["figure","path","conclusion"], ["图表","文件路径","一句话结论"]) }}
+    <label style="font-weight:700;font-size:0.8rem">Qualitative</label>
+    <div class="editable-dashed block markdown-content" data-field="results_qualitative" data-label="Qualitative" data-type="markdown" data-value="{{ (r.qualitative if r is mapping else '') | e }}">{{ r.qualitative if r is mapping else '' }}</div>
+    <label style="font-weight:700;font-size:0.8rem;margin-top:0.5rem">Key Data</label>
+    {{ table_edit("results_key_data", r.key_data if r is mapping and r.key_data else [], ["metric","value","comparison","change"], ["Metric","Value","Comparison","Change"]) }}
   </div>
 </details>
 
-<details class="section-group" open>
-  <summary>10. 结论</summary>
+<details class="section-group" open><summary>10. Conclusion</summary>
   <div class="view-mode"><div class="markdown-content">{{ exp.conclusion or '' }}</div></div>
   <div class="edit-mode" style="display:none">
-    <div class="editable-dashed block markdown-content" data-field="conclusion" data-label="10. 结论" data-type="markdown" data-value="{{ (exp.conclusion or '') | e }}">{{ exp.conclusion or '' }}</div>
+    <div class="editable-dashed block markdown-content" data-field="conclusion" data-label="10. Conclusion" data-type="markdown" data-value="{{ (exp.conclusion or '') | e }}">{{ exp.conclusion or '' }}</div>
   </div>
 </details>
 
-<details class="section-group" open>
-  <summary>11. 下一步行动</summary>
-  <div class="view-mode" id="next-steps-view">{% for s in (exp.next_steps or []) %}<div class="next-step-item">{{ s }}</div>{% endfor %}</div>
+<details class="section-group" open><summary>11. Next Steps</summary>
+  <div class="view-mode" id="next-steps-view">{% for s in (exp.next_steps or []) %}<div style="font-weight:600;padding:0.2rem 0">{{ s }}</div>{% endfor %}</div>
   <div class="edit-mode" style="display:none">{{ array_edit("next_steps", exp.next_steps or []) }}</div>
 </details>
 
-{# ===== 引用关系 ===== #}
+{# References #}
 {% if exp.references or exp.referenced_by or exp.analyzed_in %}
-<div style="margin-top:2rem;padding:1rem;background:var(--pico-card-background-color);border-radius:8px;border:1px solid #e0e0e0">
+<div style="margin-top:2rem;padding:1rem;border:4px solid var(--black);background:var(--off-white)">
   <details class="section-group" open>
-    <summary>&#x1f517; 实验引用关系</summary>
+    <summary>References</summary>
     {% if exp.references %}
     <div style="margin-bottom:0.8rem">
-      <strong style="font-size:0.85rem">本实验引用了：</strong>
+      <strong style="font-size:0.8rem;text-transform:uppercase">References:</strong>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
         {% for ref_id in exp.references %}
-        <a href="/experiments/{{ ref_id }}" class="tag-pill" style="text-decoration:none;background:var(--pico-primary);color:#fff;border-color:var(--pico-primary)">{{ ref_id }}</a>
+        <a href="/experiments/{{ ref_id }}" class="tag-pill" style="text-decoration:none;background:var(--black);color:var(--white);font-weight:700">{{ ref_id }}</a>
         {% endfor %}
       </div>
     </div>
     {% endif %}
     {% if exp.referenced_by %}
     <div style="margin-bottom:0.8rem">
-      <strong style="font-size:0.85rem">被以下实验引用：</strong>
+      <strong style="font-size:0.8rem;text-transform:uppercase">Referenced by:</strong>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
         {% for ref_id in exp.referenced_by %}
-        <a href="/experiments/{{ ref_id }}" class="tag-pill" style="text-decoration:none;background:#f0f0f0;color:#333;border:1px solid #ccc">{{ ref_id }}</a>
+        <a href="/experiments/{{ ref_id }}" class="tag-pill" style="text-decoration:none;font-weight:700">{{ ref_id }}</a>
         {% endfor %}
       </div>
     </div>
     {% endif %}
     {% if exp.analyzed_in %}
     <div>
-      <strong style="font-size:0.85rem">被以下分析引用：</strong>
+      <strong style="font-size:0.8rem;text-transform:uppercase">Analyzed in:</strong>
       <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
         {% for anal_id in exp.analyzed_in %}
-        <a href="/analysis/{{ anal_id }}" class="tag-pill" style="text-decoration:none;background:#fef3c7;color:#92400e;border:1px solid #f59e0b">{{ anal_id }}</a>
+        <a href="/analysis/{{ anal_id }}" class="tag-pill" style="text-decoration:none;background:var(--yellow);color:var(--black);font-weight:700">{{ anal_id }}</a>
         {% endfor %}
       </div>
     </div>
@@ -465,877 +237,273 @@ button.row-del:hover { background: #fce4e4 !important; }
 </div>
 {% endif %}
 
-<div style="margin-top:2rem;text-align:center">
-  <a href="/" role="button" class="outline">&larr; 返回仪表盘</a>
+<div style="text-align:center;margin-top:2rem">
+  <a href="/" role="button" class="outline">&larr; Dashboard</a>
 </div>
 
-<!-- Edit Modal -->
+{# Edit Modal #}
 <div class="edit-modal-overlay" id="edit-modal">
   <div class="edit-modal-box">
     <div class="edit-modal-label" id="edit-modal-label"></div>
     <div class="edit-modal-toolbar" id="edit-modal-toolbar">
-      <button title="粗体" onclick="execCmd('bold')"><b>B</b></button>
-      <button title="斜体" onclick="execCmd('italic')"><i>I</i></button>
-      <button title="下划线" onclick="execCmd('underline')"><u>U</u></button>
-      <button title="删除线" onclick="execCmd('strikeThrough')"><s>S</s></button>
-      <button title="行内代码" onclick="execInlineCode()"><small>&lt;/&gt;</small></button>
+      <button title="Bold" onclick="execCmd('bold')"><b>B</b></button>
+      <button title="Italic" onclick="execCmd('italic')"><i>I</i></button>
+      <button title="Underline" onclick="execCmd('underline')"><u>U</u></button>
+      <button title="Strikethrough" onclick="execCmd('strikeThrough')"><s>S</s></button>
       <span class="tb-sep"></span>
-      <button title="无序列表" onclick="execCmd('insertUnorderedList')">&#x2022;</button>
-      <button title="有序列表" onclick="execCmd('insertOrderedList')">1.</button>
-      <button title="引用" onclick="execCmd('formatBlock', 'BLOCKQUOTE')">&ldquo;</button>
+      <button title="UL" onclick="execCmd('insertUnorderedList')">&#x2022;</button>
+      <button title="OL" onclick="execCmd('insertOrderedList')">1.</button>
+      <button title="Quote" onclick="execCmd('formatBlock', 'BLOCKQUOTE')">&ldquo;</button>
       <span class="tb-sep"></span>
-      <button title="插入链接" onclick="execLink()">&#x1f517;</button>
-      <button title="插入图片" onclick="execImage()">&#x1f5bc;</button>
+      <button title="Link" onclick="execLink()">&#x1f517;</button>
     </div>
     <textarea class="edit-modal-input" id="edit-modal-input" rows="1"></textarea>
     <div class="edit-modal-rich" id="edit-modal-rich" contenteditable="true" style="display:none"></div>
     <input type="date" class="edit-modal-date" id="edit-modal-date" style="display:none">
     <div class="edit-modal-actions">
-      <button class="outline secondary" onclick="closeEditModal(false)">取消</button>
-      <button onclick="closeEditModal(true)">确认</button>
+      <button class="outline" onclick="closeEditModal(false)">Cancel</button>
+      <button onclick="closeEditModal(true)">Confirm</button>
     </div>
   </div>
 </div>
 
+{# Child Agent Modal #}
+<div class="edit-modal-overlay" id="child-modal">
+<div class="edit-modal-box child-agent-box" style="max-width:520px;width:95%;height:70vh;display:flex;flex-direction:column">
+<div style="padding:0.5rem;font-weight:700;border-bottom:3px solid var(--black);display:flex;justify-content:space-between">
+  <span>Edit {{ exp.id }}</span>
+  <button onclick="closeChildAgent()" style="border:2px solid var(--black);background:var(--white);padding:0.2rem 0.6rem;font-weight:700;cursor:pointer;font-size:0.85rem">Close</button>
+</div>
+<div id="child-legacy" class="flash" style="display:none;margin:0.5rem">
+  This experiment was created before the chat system. You can still chat with the Agent to modify it.
+  <button onclick="confirmLegacy()" style="margin-left:0.5rem">Continue</button>
+</div>
+<div id="child-msgs" style="flex:1;overflow-y:auto;padding:0.5rem;min-height:200px;max-height:50vh;display:flex;flex-direction:column;gap:0.3rem"></div>
+<div id="child-preview" style="display:none;padding:0.5rem;border:3px solid var(--black);margin:0.5rem"><div id="child-preview-content"></div></div>
+<div style="display:flex;gap:0.3rem;padding:0.5rem;border-top:3px solid var(--black)">
+  <input id="child-input" placeholder="Enter modification..." style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChildMsg();}">
+  <button id="btn-child-send" onclick="sendChildMsg()">Send</button>
+</div>
+</div>
+</div>
+
 <script>
-// ---- Edit mode toggle ----
-var _isEditing = false;
-var _editingTarget = null;
-var _savedHtml = {};
+// ---- Edit mode ----
+var _isEditing = false, _editingTarget = null, _savedHtml = {};
 
 function addDashSVG(el) {
-  var rect = el.getBoundingClientRect();
-  var w = rect.width, h = rect.height;
-  if (w < 4 || h < 4) return;
-  var svgNS = 'http://www.w3.org/2000/svg';
-  var svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('class', 'dash-svg');
-  svg.setAttribute('width', w);
-  svg.setAttribute('height', h);
-  var r = document.createElementNS(svgNS, 'rect');
-  r.setAttribute('x', '1');
-  r.setAttribute('y', '1');
-  r.setAttribute('width', w - 2);
-  r.setAttribute('height', h - 2);
-  r.setAttribute('fill', 'none');
-  r.setAttribute('stroke', '#bbb');
-  r.setAttribute('stroke-width', '2');
-  r.setAttribute('stroke-dasharray', '8 6');
-  r.setAttribute('rx', '4');
-  var anim = document.createElementNS(svgNS, 'animate');
-  anim.setAttribute('attributeName', 'stroke-dashoffset');
-  anim.setAttribute('from', '14');
-  anim.setAttribute('to', '0');
-  anim.setAttribute('dur', '8s');
-  anim.setAttribute('repeatCount', 'indefinite');
-  r.appendChild(anim);
-  svg.appendChild(r);
-  // Remove previous SVG if any
-  var old = el.querySelector('.dash-svg');
-  if (old) old.remove();
-  el.appendChild(svg);
+  var rect=el.getBoundingClientRect(), w=rect.width, h=rect.height; if(w<4||h<4)return;
+  var svgNS='http://www.w3.org/2000/svg';
+  var svg=document.createElementNS(svgNS,'svg');svg.setAttribute('class','dash-svg');svg.setAttribute('width',w);svg.setAttribute('height',h);
+  var r=document.createElementNS(svgNS,'rect');r.setAttribute('x','1');r.setAttribute('y','1');r.setAttribute('width',w-2);r.setAttribute('height',h-2);
+  r.setAttribute('fill','none');r.setAttribute('stroke','#111');r.setAttribute('stroke-width','2');r.setAttribute('stroke-dasharray','8 6');
+  svg.appendChild(r);var old=el.querySelector('.dash-svg');if(old)old.remove();el.appendChild(svg);
 }
 
 function toggleEdit() {
   _isEditing = true;
-  document.querySelectorAll('.view-mode').forEach(function(el) { el.style.display = 'none'; });
-  document.querySelectorAll('.edit-mode').forEach(function(el) { el.style.display = ''; });
-  document.getElementById('btn-edit').style.display = 'none';
-  document.getElementById('btn-save').style.display = '';
-  document.getElementById('btn-cancel').style.display = '';
-  // Hide PDF button in edit mode
+  document.querySelectorAll('.view-mode').forEach(function(el){el.style.display='none';});
+  document.querySelectorAll('.edit-mode').forEach(function(el){el.style.display='';});
+  document.getElementById('btn-edit').style.display='none';
+  document.getElementById('btn-save').style.display='';
+  document.getElementById('btn-cancel').style.display='';
   var pdfBtn = document.querySelector('button[onclick*="print"]');
-  if (pdfBtn) { pdfBtn.style.display = 'none'; _savedPdfBtn = pdfBtn; }
+  if(pdfBtn){pdfBtn.style.display='none';_savedPdfBtn=pdfBtn;}
   _savedHtml = {};
-  ['field-title','field-date-range','field-experimenter','field-status','field-tags-container'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el) _savedHtml[id] = el.innerHTML;
+  ['field-title','field-date-range','field-experimenter','field-status','field-tags-container'].forEach(function(id){
+    var el=document.getElementById(id); if(el)_savedHtml[id]=el.innerHTML;
   });
-  // Wrap title in dashed container
-  var titleEl = document.getElementById('field-title');
-  if (titleEl) {
-    var titleText = titleEl.textContent.trim();
-    titleEl.innerHTML = '<span class="editable-dashed" data-field="title" data-label="标题" data-type="text" style="font-size:inherit;font-weight:inherit">' + escHtml(titleText) + '</span>';
-  }
+  var titleEl=document.getElementById('field-title');
+  if(titleEl){titleEl.innerHTML='<span class="editable-dashed" data-field="title" data-label="Title" data-type="text" style="font-size:inherit;font-weight:inherit">'+escHtml(titleEl.textContent.trim())+'</span>';}
   makeDateRangeEdit();
-  // Wrap experimenter in dashed container
-  var expEl = document.getElementById('field-experimenter');
-  if (expEl) {
-    var expText = expEl.textContent.trim();
-    expEl.innerHTML = '<span class="editable-dashed" data-field="experimenter" data-label="实验者" data-type="text">' + escHtml(expText) + '</span>';
-  }
+  var expEl=document.getElementById('field-experimenter');
+  if(expEl){expEl.innerHTML='<span class="editable-dashed" data-field="experimenter" data-label="Experimenter" data-type="text">'+escHtml(expEl.textContent.trim())+'</span>';}
   makeStatusEdit();
   makeTagsEdit();
-  // Render markdown in edit-mode dashed containers
-  document.querySelectorAll('.edit-mode .markdown-content').forEach(function(el) {
-    if (!el.dataset.rendered && typeof marked !== 'undefined') {
-      el.innerHTML = marked.parse(el.textContent);
-      el.dataset.rendered = '1';
-    }
+  document.querySelectorAll('.edit-mode .markdown-content').forEach(function(el){
+    if(!el.dataset.rendered && typeof marked!=='undefined'){el.innerHTML=marked.parse(el.textContent);el.dataset.rendered='1';}
   });
-  // Inject SVG marching-dash borders
-  setTimeout(function() {
-    document.querySelectorAll('.editable-dashed').forEach(function(el) {
-      addDashSVG(el);
-    });
+  setTimeout(function(){
+    document.querySelectorAll('.editable-dashed').forEach(function(el){addDashSVG(el);});
     setTimeout(equalizeRowHeights, 30);
   }, 20);
 }
 
 function equalizeRowHeights() {
-  document.querySelectorAll('.edit-mode table.academic-table tbody tr').forEach(function(tr) {
-    var maxH = 0;
-    var cells = [];
-    tr.querySelectorAll('.editable-dashed').forEach(function(el) {
-      el.style.height = ''; // Reset so we get natural height
-    });
-    tr.querySelectorAll('.editable-dashed').forEach(function(el) {
-      var h = el.scrollHeight;
-      if (h > maxH) maxH = h;
-      cells.push(el);
-    });
-    cells.forEach(function(el) {
-      el.style.height = maxH + 'px';
-      el.style.minHeight = maxH + 'px';
-      // Refresh SVG to match new height
-      addDashSVG(el);
-    });
+  document.querySelectorAll('.edit-mode table.academic-table tbody tr').forEach(function(tr){
+    var maxH=0, cells=[];
+    tr.querySelectorAll('.editable-dashed').forEach(function(el){el.style.height='';});
+    tr.querySelectorAll('.editable-dashed').forEach(function(el){var h=el.scrollHeight;if(h>maxH)maxH=h;cells.push(el);});
+    cells.forEach(function(el){el.style.height=maxH+'px';el.style.minHeight=maxH+'px';addDashSVG(el);});
   });
 }
 
 function cancelEdit() {
-  _isEditing = false;
-  document.querySelectorAll('.view-mode').forEach(function(el) { el.style.display = ''; });
-  document.querySelectorAll('.edit-mode').forEach(function(el) { el.style.display = 'none'; });
-  document.getElementById('btn-edit').style.display = '';
-  document.getElementById('btn-save').style.display = 'none';
-  document.getElementById('btn-cancel').style.display = 'none';
-  // Restore PDF button
-  if (_savedPdfBtn) { _savedPdfBtn.style.display = ''; _savedPdfBtn = null; }
-  if (_savedHtml) {
-    Object.keys(_savedHtml).forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) el.innerHTML = _savedHtml[id];
-    });
-  }
+  _isEditing=false;
+  document.querySelectorAll('.view-mode').forEach(function(el){el.style.display='';});
+  document.querySelectorAll('.edit-mode').forEach(function(el){el.style.display='none';});
+  document.getElementById('btn-edit').style.display='';document.getElementById('btn-save').style.display='none';document.getElementById('btn-cancel').style.display='none';
+  if(_savedPdfBtn){_savedPdfBtn.style.display='';_savedPdfBtn=null;}
+  if(_savedHtml){Object.keys(_savedHtml).forEach(function(id){var el=document.getElementById(id);if(el)el.innerHTML=_savedHtml[id];});}
 }
 
 function makeDateRangeEdit() {
-  var el = document.getElementById('field-date-range');
-  if (!el) return;
-  var raw = el.textContent.trim();
-  var parts = raw.split('~');
-  var startDate = (parts[0] || '').trim();
-  var endDate = (parts[1] || '').trim();
-  if (!endDate || endDate === startDate) endDate = startDate;
-  el.innerHTML = '<span class="editable-dashed" data-field="date" data-label="开始日期" data-type="date" data-value="' + escHtml(startDate) + '">' + escHtml(startDate) + '</span>'
-    + ' <span style="margin:0 0.2rem;color:var(--pico-muted-color)">~</span> '
-    + '<span class="editable-dashed" data-field="end_date" data-label="结束日期" data-type="date" data-value="' + escHtml(endDate) + '">' + escHtml(endDate) + '</span>';
+  var el=document.getElementById('field-date-range');if(!el)return;
+  var raw=el.textContent.trim(),parts=raw.split('~'),startDate=(parts[0]||'').trim(),endDate=(parts[1]||'').trim();
+  if(!endDate||endDate===startDate)endDate=startDate;
+  el.innerHTML='<span class="editable-dashed" data-field="date" data-label="Start Date" data-type="date" data-value="'+escHtml(startDate)+'">'+escHtml(startDate)+'</span> ~ <span class="editable-dashed" data-field="end_date" data-label="End Date" data-type="date" data-value="'+escHtml(endDate)+'">'+escHtml(endDate)+'</span>';
 }
 
 function makeStatusEdit() {
-  var el = document.getElementById('field-status');
-  if (!el) return;
-  var cur = el.dataset.value || el.textContent.trim();
-  el.className = '';
-  el.style.cssText = 'display:inline-block';
-  var opts = ['planned','running','done','failed','repeated'];
-  // Triple for infinite loop feel
-  var allOpts = opts.concat(opts).concat(opts);
-  var bgColors = {planned:'#fff3cd', running:'#cce5ff', done:'#d4edda', failed:'#f8d7da', repeated:'#e2d9f3'};
-  var borderColors = {planned:'#856404', running:'#004085', done:'#155724', failed:'#721c24', repeated:'#5a3d7a'};
-  var h = '<div class="status-slider" id="status-slider" style="background:' + (bgColors[cur]||'#f5f5f5') + ';border-color:' + (borderColors[cur]||'#ccc') + '">';
-  for (var i = 0; i < allOpts.length; i++) {
-    var o = allOpts[i];
-    // Mark selected in ALL three sets for visual consistency
-    h += '<span class="status-option' + (o === cur ? ' selected' : '') + '" data-value="' + o + '" data-idx="' + i + '" onclick="selectStatus(\'' + o + '\', this)">' + o + '</span>';
-  }
-  h += '</div><input type="hidden" id="inl-status" value="' + escHtml(cur) + '">';
-  el.innerHTML = h;
-  setTimeout(function() {
-    // Scroll to the middle occurrence
-    var allNodes = document.querySelectorAll('#status-slider .status-option');
-    var target = allNodes[5 + opts.indexOf(cur)]; // middle set, index 5-9
-    if (target) target.scrollIntoView({behavior:'instant',block:'nearest',inline:'center'});
-    // Setup infinite loop after initial scroll
+  var el=document.getElementById('field-status');if(!el)return;
+  var cur=el.dataset.value||el.textContent.trim();
+  el.className='';el.style.cssText='display:inline-block';
+  var opts=['planned','running','done','failed','repeated'],allOpts=opts.concat(opts).concat(opts);
+  var h='<div class="status-slider" id="status-slider">';
+  for(var i=0;i<allOpts.length;i++){var o=allOpts[i];h+='<span class="status-option'+(o===cur?' selected':'')+'" data-value="'+o+'" onclick="selectStatus(\''+o+'\',this)">'+o+'</span>';}
+  h+='</div><input type="hidden" id="inl-status" value="'+escHtml(cur)+'">';
+  el.innerHTML=h;
+  setTimeout(function(){
+    var allNodes=document.querySelectorAll('#status-slider .status-option');
+    var target=allNodes[5+opts.indexOf(cur)];if(target)target.scrollIntoView({behavior:'instant',block:'nearest',inline:'center'});
     setupSliderLoop();
-  }, 40);
+  },40);
 }
-
 function setupSliderLoop() {
-  var slider = document.getElementById('status-slider');
-  if (!slider) return;
-  var allNodes = slider.querySelectorAll('.status-option');
-  if (allNodes.length < 10) return;
-  // Width of one set (5 items)
-  var setW = allNodes[5].offsetLeft - allNodes[0].offsetLeft;
-  var timer;
-  slider.addEventListener('scroll', function() {
-    clearTimeout(timer);
-    timer = setTimeout(function() {
-      var sl = slider.scrollLeft;
-      if (sl < setW * 0.4) {
-        slider.scrollLeft += setW;
-      } else if (sl > setW * 1.6) {
-        slider.scrollLeft -= setW;
-      }
-    }, 120);
-  }, {passive: true});
+  var slider=document.getElementById('status-slider');if(!slider)return;
+  var allNodes=slider.querySelectorAll('.status-option');if(allNodes.length<10)return;
+  var setW=allNodes[5].offsetLeft-allNodes[0].offsetLeft,timer;
+  slider.addEventListener('scroll',function(){clearTimeout(timer);timer=setTimeout(function(){var sl=slider.scrollLeft;if(sl<setW*0.4)slider.scrollLeft+=setW;else if(sl>setW*1.6)slider.scrollLeft-=setW;},120);},{passive:true});
 }
-
-function selectStatus(v, clickedEl) {
-  document.getElementById('inl-status').value = v;
-  var slider = document.getElementById('status-slider');
-  var bgColors = {planned:'#fff3cd', running:'#cce5ff', done:'#d4edda', failed:'#f8d7da', repeated:'#e2d9f3'};
-  var borderColors = {planned:'#856404', running:'#004085', done:'#155724', failed:'#721c24', repeated:'#5a3d7a'};
-  slider.style.background = bgColors[v] || '#f5f5f5';
-  slider.style.borderColor = borderColors[v] || '#ccc';
-  // Update ALL instances
-  slider.querySelectorAll('.status-option').forEach(function(b) {
-    b.classList.toggle('selected', b.dataset.value === v);
-  });
-  if (clickedEl) {
-    clickedEl.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
-  }
+function selectStatus(v,clickedEl) {
+  document.getElementById('inl-status').value=v;
+  var slider=document.getElementById('status-slider');
+  slider.querySelectorAll('.status-option').forEach(function(b){b.classList.toggle('selected',b.dataset.value===v);});
+  if(clickedEl)clickedEl.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
 }
 
 function makeTagsEdit() {
-  var c = document.getElementById('field-tags-container');
-  if (!c) return;
-  var h = '';
-  c.querySelectorAll('.tag-pill').forEach(function(p, i) {
-    var delay = (Math.random() * 0.5).toFixed(2);
-    h += '<span class="tag-pill tag-jitter" style="display:inline-flex;align-items:center;gap:4px;animation-delay:' + delay + 's">' + escHtml(p.textContent.trim()) + '<button onclick="this.parentElement.remove()" style="font-size:0.7rem;padding:0 2px;line-height:1;background:none;border:none;cursor:pointer;color:#e53935!important">&times;</button></span>';
+  var c=document.getElementById('field-tags-container');if(!c)return;
+  var h='';
+  c.querySelectorAll('.tag-pill').forEach(function(p,i){
+    h+='<span class="tag-pill tag-jitter" style="display:inline-flex;align-items:center;gap:4px;animation-delay:'+(Math.random()*0.5).toFixed(2)+'s">'+escHtml(p.textContent.trim())+'<button onclick="this.parentElement.remove()" style="font-size:0.65rem;padding:0 2px;line-height:1;background:none;border:none;cursor:pointer;font-weight:700">&times;</button></span>';
   });
-  h += '<span style="display:inline-flex;align-items:center;gap:2px;margin:0.15em"><input id="new-tag-input" placeholder="新标签" style="width:80px;font-size:0.75em;padding:0.15em 0.55em;border:1px solid #ccc;border-radius:6px;box-sizing:border-box" onkeydown="if(event.key==\'Enter\'){addTag();event.preventDefault()}"><button onclick="addTag()" style="font-size:0.7rem;padding:0 4px">+</button></span>';
-  c.innerHTML = h;
+  h+='<span style="display:inline-flex;align-items:center;gap:2px;margin:0.15em"><input id="new-tag-input" placeholder="New tag" style="width:80px;font-size:0.7em;padding:0.15em 0.4em;border:2px solid var(--black)" onkeydown="if(event.key==\'Enter\'){addTag();event.preventDefault()}"><button onclick="addTag()" style="font-size:0.65rem;padding:0 4px;border:2px solid var(--black);background:var(--white);cursor:pointer">+</button></span>';
+  c.innerHTML=h;
 }
-
 function getExistingTags() {
-  var c = document.getElementById('field-tags-container');
-  if (!c) return [];
-  var r = [];
-  c.querySelectorAll('.tag-pill').forEach(function(p) {
-    var clone = p.cloneNode(true);
-    var btn = clone.querySelector('button');
-    if (btn) btn.remove();
-    var t = clone.textContent.trim();
-    if (t) r.push(t);
-  });
+  var c=document.getElementById('field-tags-container');if(!c)return[];
+  var r=[];c.querySelectorAll('.tag-pill').forEach(function(p){var clone=p.cloneNode(true);var btn=clone.querySelector('button');if(btn)btn.remove();var t=clone.textContent.trim();if(t)r.push(t);});
   return r;
 }
-
-function addTag() {
-  var inp = document.getElementById('new-tag-input');
-  if (!inp || !inp.value.trim()) return;
-  var pill = document.createElement('span');
-  pill.className = 'tag-pill';
-  pill.style.cssText = 'display:inline-flex;align-items:center;gap:4px';
-  pill.innerHTML = escHtml(inp.value.trim()) + '<button onclick="this.parentElement.remove()" style="font-size:0.7rem;padding:0 2px;line-height:1;background:none;border:none;cursor:pointer;color:#e53935!important">&times;</button>';
-  inp.parentElement.before(pill);
-  inp.value = '';
-}
+function addTag(){var inp=document.getElementById('new-tag-input');if(!inp||!inp.value.trim())return;var pill=document.createElement('span');pill.className='tag-pill';pill.style.cssText='display:inline-flex;align-items:center;gap:4px';pill.innerHTML=escHtml(inp.value.trim())+'<button onclick="this.parentElement.remove()" style="font-size:0.65rem;padding:0 2px;line-height:1;background:none;border:none;cursor:pointer;font-weight:700">&times;</button>';inp.parentElement.before(pill);inp.value='';}
 
 function saveEdit() {
-  var data = collectData();
-  fetch('/experiments/{{ exp.id }}/save-json', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(data)
-  }).then(function(r) { return r.json(); })
-    .then(function(r) { if (r.ok) location.reload(); else alert('保存失败: ' + (r.error||'unknown')); })
-    .catch(function(e) { alert('保存失败: ' + e.message); });
+  var data=collectData();
+  fetch('/experiments/{{ exp.id }}/save-json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(function(r){return r.json();}).then(function(r){if(r.ok)location.reload();else alert('Save failed: '+(r.error||'unknown'));})
+    .catch(function(e){alert('Save failed: '+e.message);});
 }
 
-function getFieldValue(fieldName) {
-  var el = document.querySelector('.editable-dashed[data-field="' + fieldName + '"]');
-  if (!el) return '';
-  return el.dataset.value !== undefined ? el.dataset.value : el.textContent.trim();
-}
+function getFieldValue(fieldName){var el=document.querySelector('.editable-dashed[data-field="'+fieldName+'"]');if(!el)return'';return el.dataset.value!==undefined?el.dataset.value:el.textContent.trim();}
 
-function collectData() {
-  var d = {};
-  d['title'] = getFieldValue('title');
-  d['experimenter'] = getFieldValue('experimenter');
-  d['date'] = getFieldValue('date');
-  var endDate = getFieldValue('end_date');
-  if (endDate && endDate !== d['date']) d['end_date'] = endDate;
-  d['purpose'] = getFieldValue('purpose');
-  d['conclusion'] = getFieldValue('conclusion');
-  var st = document.getElementById('inl-status');
-  if (st) d['status'] = st.value;
-  d['tags'] = getExistingTags();
-  d['original_notes'] = getFieldValue('original_notes');
-  d['sop'] = collectArr('sop');
-  d['next_steps'] = collectArr('next_steps');
-  var na = document.getElementById('edit-observations-no_anomalies');
-  d['observations'] = {no_anomalies: na ? na.checked : false, items: collectArr('observations_items')};
-  d['materials'] = collectTbl('materials', ['name','purity','vendor','amount','notes']);
-  d['equipment'] = collectTbl('equipment', ['device','model','location']);
-  d['experimental_plan'] = collectTbl('experimental_plan', ['group','condition','expected']);
-  d['process_parameters'] = collectTbl('process_parameters', ['step','parameter','setpoint','actual','deviation']);
-  d['characterization'] = collectTbl('characterization', ['method','sample_id','preparation','submission_date','data_path']);
-  var rq = getFieldValue('results_qualitative');
-  d['results'] = {
-    qualitative: rq,
-    key_data: collectTbl('results_key_data', ['metric','value','comparison','change']),
-    figures: collectTbl('results_figures', ['figure','path','conclusion'])
-  };
+function collectData(){
+  var d={};d['title']=getFieldValue('title');d['experimenter']=getFieldValue('experimenter');d['date']=getFieldValue('date');
+  var endDate=getFieldValue('end_date');if(endDate&&endDate!==d['date'])d['end_date']=endDate;
+  d['purpose']=getFieldValue('purpose');d['conclusion']=getFieldValue('conclusion');
+  var st=document.getElementById('inl-status');if(st)d['status']=st.value;
+  d['tags']=getExistingTags();d['original_notes']=getFieldValue('original_notes');
+  d['sop']=collectArr('sop');d['next_steps']=collectArr('next_steps');
+  var na=document.getElementById('edit-observations-no_anomalies');
+  d['observations']={no_anomalies:na?na.checked:false,items:collectArr('observations_items')};
+  d['materials']=collectTbl('materials',['name','purity','vendor','amount','notes']);
+  d['equipment']=collectTbl('equipment',['device','model','location']);
+  d['experimental_plan']=collectTbl('experimental_plan',['group','condition','expected']);
+  d['process_parameters']=collectTbl('process_parameters',['step','parameter','setpoint','actual','deviation']);
+  d['characterization']=collectTbl('characterization',['method','sample_id','preparation','submission_date','data_path']);
+  d['results']={qualitative:getFieldValue('results_qualitative'),key_data:collectTbl('results_key_data',['metric','value','comparison','change']),figures:[]};
   return d;
 }
+function collectTbl(name,keys){var t=document.getElementById('table-'+name);if(!t)return[];var rows=[];t.querySelectorAll('tbody tr').forEach(function(tr){var row={};tr.querySelectorAll('.editable-dashed[data-key]').forEach(function(el){row[el.dataset.key]=el.dataset.value!==undefined?el.dataset.value:el.textContent.trim();});if(keys.some(function(k){return row[k]&&row[k].trim();}))rows.push(row);});return rows;}
+function collectArr(name){var list=document.getElementById('list-'+name);if(!list)return[];var vals=[];list.querySelectorAll('.editable-dashed').forEach(function(el){var val=el.dataset.value!==undefined?el.dataset.value:el.textContent.trim();if(val)vals.push(val);});return vals;}
 
-function collectTbl(name, keys) {
-  var t = document.getElementById('table-' + name);
-  if (!t) return [];
-  var rows = [];
-  t.querySelectorAll('tbody tr').forEach(function(tr) {
-    var row = {};
-    tr.querySelectorAll('.editable-dashed[data-key]').forEach(function(el) {
-      var key = el.dataset.key;
-      var val = el.dataset.value !== undefined ? el.dataset.value : el.textContent.trim();
-      row[key] = val;
-    });
-    var hasValue = keys.some(function(k) { return row[k] && row[k].trim(); });
-    if (hasValue) rows.push(row);
-  });
-  return rows;
+function addArrayItem(name){var list=document.getElementById('list-'+name);if(!list)return;var li=document.createElement('li');li.style.cssText='display:flex;gap:0.3rem;align-items:center;margin-bottom:0.3rem';li.innerHTML='<span class="editable-dashed" data-array="'+escHtml(name)+'" data-index="new" data-type="textarea" data-label="'+escHtml(name)+'" style="flex:1;min-height:1.2em"></span><button class="outline row-del" style="font-size:0.7rem;padding:0 0.3rem;flex-shrink:0" onclick="this.closest(\'li\').remove()">X</button>';list.appendChild(li);setTimeout(function(){var newSpan=li.querySelector('.editable-dashed');if(newSpan)addDashSVG(newSpan);},20);}
+function addTableRow(name,keys,headers){var t=document.getElementById('table-'+name);if(!t)return;var tr=document.createElement('tr');var h='';keys.forEach(function(k,i){var label=(headers&&headers[i])?headers[i]:k;h+='<td><span class="editable-dashed" data-table="'+escHtml(name)+'" data-row="new" data-key="'+escHtml(k)+'" data-label="'+escHtml(label)+'" data-type="textarea" style="display:block;min-width:60px;min-height:1.2em"></span></td>';});h+='<td><button class="outline row-del" style="font-size:0.7rem;padding:0 0.3rem" onclick="this.closest(\'tr\').remove()">X</button></td>';tr.innerHTML=h;t.querySelector('tbody').appendChild(tr);setTimeout(function(){tr.querySelectorAll('.editable-dashed').forEach(function(el){addDashSVG(el);});setTimeout(equalizeRowHeights,30);},20);}
+
+function regenerate(expId){
+  var btn=document.getElementById('btn-regenerate'),s=document.getElementById('regen-status');
+  btn.disabled=true;btn.textContent='Regenerating...';s.textContent='';
+  var notesEl=document.querySelector('.editable-dashed[data-field="original_notes"]');
+  var notesContent=notesEl?(notesEl.dataset.value!==undefined?notesEl.dataset.value:notesEl.textContent.trim()):'';
+  var fd=new FormData();fd.append('original_notes',notesContent);
+  fetch('/experiments/'+expId+'/regenerate',{method:'POST',body:fd})
+    .then(function(r){return r.json();}).then(function(r){if(r.ok){s.textContent='Done. Reloading...';setTimeout(function(){location.reload()},800);}else{s.textContent='Failed: '+(r.error||'unknown');btn.disabled=false;btn.innerHTML='Regenerate from Notes';}})
+    .catch(function(e){s.textContent='Failed: '+e.message;btn.disabled=false;btn.innerHTML='Regenerate from Notes';});
 }
 
-function collectArr(name) {
-  var list = document.getElementById('list-' + name);
-  if (!list) return [];
-  var vals = [];
-  list.querySelectorAll('.editable-dashed').forEach(function(el) {
-    var val = el.dataset.value !== undefined ? el.dataset.value : el.textContent.trim();
-    if (val) vals.push(val);
-  });
-  return vals;
-}
+// Modal editing
+function openEditModal(dashedEl){if(!_isEditing)return;_editingTarget=dashedEl;var label=dashedEl.dataset.label||'',type=dashedEl.dataset.type||'text',value=dashedEl.dataset.value!==undefined?dashedEl.dataset.value:dashedEl.textContent.trim();document.getElementById('edit-modal-label').textContent=label;var textarea=document.getElementById('edit-modal-input'),rich=document.getElementById('edit-modal-rich'),dateInput=document.getElementById('edit-modal-date'),toolbar=document.getElementById('edit-modal-toolbar');textarea.style.display='none';rich.style.display='none';dateInput.style.display='none';toolbar.style.display='none';if(type==='date'){dateInput.value=value;dateInput.style.display='';dateInput.focus();}else if(type==='markdown'||type==='textarea'||type==='html'){toolbar.style.display='';var html=value;if(type==='html'){}else if(type==='markdown'&&typeof marked!=='undefined'){html=marked.parse(value);}else{html=value.split('\n').map(function(line){return line?'<div>'+escHtml(line)+'</div>':'<div><br></div>';}).join('');}rich.innerHTML=html;rich.style.display='';rich.focus();}else{textarea.value=value;textarea.style.display='';autoResizeTextarea(textarea);textarea.focus();textarea.select();}document.getElementById('edit-modal').classList.add('active');}
+function autoResizeTextarea(ta){ta.style.height='auto';ta.style.height=Math.max(36,ta.scrollHeight)+'px';}
 
-function addArrayItem(name) {
-  var list = document.getElementById('list-' + name);
-  if (!list) return;
-  var li = document.createElement('li');
-  li.style.cssText = 'display:flex;gap:0.3rem;align-items:center;margin-bottom:0.3rem';
-  li.innerHTML = '<span class="editable-dashed" data-array="' + escHtml(name) + '" data-index="new" data-type="textarea" data-label="' + escHtml(name) + '" style="flex:1;min-height:1.2em"></span><button class="outline secondary row-del" style="font-size:0.7rem;padding:0 0.3rem;flex-shrink:0" onclick="this.closest(\'li\').remove()">&#x2716;</button>';
-  list.appendChild(li);
-  setTimeout(function() {
-    var newSpan = li.querySelector('.editable-dashed');
-    if (newSpan) addDashSVG(newSpan);
-  }, 20);
-}
+function closeEditModal(save){
+  if(save&&_editingTarget){var type=_editingTarget.dataset.type||'text',newValue;if(type==='date'){newValue=document.getElementById('edit-modal-date').value;}else if(type==='markdown'||type==='textarea'||type==='html'){newValue=document.getElementById('edit-modal-rich').innerText.trim();}else{newValue=document.getElementById('edit-modal-input').value;}_editingTarget.dataset.value=newValue;if(type==='html'){_editingTarget.innerHTML=newValue;}else if(type==='markdown'&&typeof marked!=='undefined'){_editingTarget.innerHTML=marked.parse(newValue);_editingTarget.dataset.rendered='1';}else if(type==='date'){_editingTarget.textContent=newValue||'Not set';}else{_editingTarget.textContent=newValue;}addDashSVG(_editingTarget);setTimeout(equalizeRowHeights,30);}_editingTarget=null;document.getElementById('edit-modal').classList.remove('active');}
 
-function addTableRow(name, keys, headers) {
-  var t = document.getElementById('table-' + name);
-  if (!t) return;
-  var tr = document.createElement('tr');
-  var h = '';
-  keys.forEach(function(k, i) {
-    var label = (headers && headers[i]) ? headers[i] : k;
-    h += '<td><span class="editable-dashed" data-table="' + escHtml(name) + '" data-row="new" data-key="' + escHtml(k) + '" data-label="' + escHtml(label) + '" data-type="textarea" style="display:block;min-width:60px;min-height:1.2em"></span></td>';
-  });
-  h += '<td><button class="outline secondary row-del" style="font-size:0.7rem;padding:0 0.3rem" onclick="this.closest(\'tr\').remove()">&#x2716;</button></td>';
-  tr.innerHTML = h;
-  t.querySelector('tbody').appendChild(tr);
-  // Add SVG marching dashes to new cells
-  setTimeout(function() {
-    tr.querySelectorAll('.editable-dashed').forEach(function(el) { addDashSVG(el); });
-    setTimeout(equalizeRowHeights, 30);
-  }, 20);
-}
+function focusRich(){document.getElementById('edit-modal-rich').focus();}
+function execCmd(cmd,val){focusRich();document.execCommand(cmd,false,val||null);}
+function execLink(){focusRich();var sel=window.getSelection();if(!sel.rangeCount)return;var url=prompt('URL:','https://');if(!url)return;if(sel.isCollapsed){document.execCommand('insertHTML',false,'<a href="'+escHtml(url)+'" target="_blank">link</a>');}else{document.execCommand('createLink',false,url);}}
 
-function regenerate(expId) {
-  var btn = document.getElementById('btn-regenerate');
-  var s = document.getElementById('regen-status');
-  btn.disabled = true;
-  btn.textContent = '⏳ AI 重新生成中...';
-  s.textContent = '';
-  var notesEl = document.querySelector('.editable-dashed[data-field="original_notes"]');
-  var notesContent = notesEl ? (notesEl.dataset.value !== undefined ? notesEl.dataset.value : notesEl.textContent.trim()) : '';
-  var fd = new FormData();
-  fd.append('original_notes', notesContent);
-  fetch('/experiments/' + expId + '/regenerate', {method:'POST', body:fd})
-    .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (r.ok) {
-        s.textContent = '已重新生成，刷新中...';
-        setTimeout(function(){location.reload()},800);
-      } else {
-        s.textContent = '失败: '+(r.error||'unknown');
-        btn.disabled = false;
-        btn.innerHTML = '&#x1f504; 根据修改后的笔记重新生成实验记录';
-      }
-    })
-    .catch(function(e) {
-      s.textContent = '失败: '+e.message;
-      btn.disabled = false;
-      btn.innerHTML = '&#x1f504; 根据修改后的笔记重新生成实验记录';
-    });
-}
+document.addEventListener('click',function(e){if(e.target.closest('#edit-modal'))return;var dashed=e.target.closest('.editable-dashed');if(dashed&&_isEditing)openEditModal(dashed);});
+// Overlay click no longer closes the modal — use Cancel/Confirm buttons
+document.getElementById('edit-modal-input').addEventListener('input',function(){autoResizeTextarea(this);});
 
-// ---- Modal editing ----
-function openEditModal(dashedEl) {
-  if (!_isEditing) return;
-  _editingTarget = dashedEl;
-  var label = dashedEl.dataset.label || '';
-  var type = dashedEl.dataset.type || 'text';
-  var value = dashedEl.dataset.value !== undefined ? dashedEl.dataset.value : dashedEl.textContent.trim();
-  document.getElementById('edit-modal-label').textContent = label;
+function delExp(id){if(!confirm('Delete '+id+'?'))return;fetch('/experiments/'+id+'/delete',{method:'DELETE'}).then(function(){location.href='/';});}
 
-  var textarea = document.getElementById('edit-modal-input');
-  var rich = document.getElementById('edit-modal-rich');
-  var dateInput = document.getElementById('edit-modal-date');
-  var toolbar = document.getElementById('edit-modal-toolbar');
+function escHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
-  // Hide all editors first
-  textarea.style.display = 'none';
-  rich.style.display = 'none';
-  dateInput.style.display = 'none';
-  toolbar.style.display = 'none';
+function editTag(pill){if(_isEditing)return;if(pill.querySelector('input, button'))return;var orig=pill.textContent.trim();pill.innerHTML='<input type="text" value="'+escHtml(orig)+'" style="font-size:0.75rem;width:8em;padding:0 2px;border:2px solid var(--black)">';var inp=pill.querySelector('input');inp.focus();inp.select();function commit(){var v=inp.value.trim();if(v)pill.textContent=v;else pill.textContent=orig;}inp.addEventListener('blur',commit);inp.addEventListener('keydown',function(ev){if(ev.key==='Enter')commit();if(ev.key==='Escape'){pill.textContent=orig;}});}
 
-  if (type === 'date') {
-    // Calendar date picker
-    dateInput.value = value;
-    dateInput.style.display = '';
-    dateInput.focus();
-  } else if (type === 'markdown' || type === 'textarea' || type === 'html') {
-    // Rich text editor with toolbar
-    toolbar.style.display = '';
-    var html = value;
-    if (type === 'html') {
-      // Already HTML, use as-is
-    } else if (type === 'markdown' && typeof marked !== 'undefined') {
-      html = marked.parse(value);
-    } else {
-      html = value.split('\n').map(function(line) {
-        return line ? '<div>' + escHtml(line) + '</div>' : '<div><br></div>';
-      }).join('');
-    }
-    rich.innerHTML = html;
-    rich.style.display = '';
-    rich.focus();
-    var sel = window.getSelection();
-    sel.removeAllRanges();
-    var range = document.createRange();
-    if (rich.firstChild) {
-      range.setStart(rich.firstChild, 0);
-      range.collapse(true);
-      sel.addRange(range);
-    }
-  } else {
-    // Plain text / title — auto-growing textarea
-    textarea.value = value;
-    textarea.style.display = '';
-    // Auto-resize on input
-    autoResizeTextarea(textarea);
-    textarea.focus();
-    textarea.select();
-  }
-
-  document.getElementById('edit-modal').classList.add('active');
-}
-
-function autoResizeTextarea(ta) {
-  ta.style.height = 'auto';
-  ta.style.height = Math.max(36, ta.scrollHeight) + 'px';
-}
-
-function closeEditModal(save) {
-  if (save && _editingTarget) {
-    var type = _editingTarget.dataset.type || 'text';
-    var newValue;
-
-    if (type === 'date') {
-      newValue = document.getElementById('edit-modal-date').value;
-    } else if (type === 'markdown' || type === 'textarea' || type === 'html') {
-      var html = document.getElementById('edit-modal-rich').innerHTML;
-      if (type === 'markdown') {
-        newValue = htmlToMarkdown(html);
-      } else {
-        newValue = document.getElementById('edit-modal-rich').innerText.trim();
-      }
-    } else {
-      newValue = document.getElementById('edit-modal-input').value;
-    }
-
-    _editingTarget.dataset.value = newValue;
-    if (type === 'html') {
-      _editingTarget.innerHTML = newValue;
-    } else if (type === 'markdown' && typeof marked !== 'undefined') {
-      _editingTarget.innerHTML = marked.parse(newValue);
-      _editingTarget.dataset.rendered = '1';
-    } else if (type === 'date') {
-      _editingTarget.textContent = newValue || '未设置';
-    } else {
-      _editingTarget.textContent = newValue;
-    }
-    // Refresh SVG marching-dash border after content change
-    addDashSVG(_editingTarget);
-    // Re-equalize row heights if this is inside a table
-    setTimeout(equalizeRowHeights, 30);
-  }
-  _editingTarget = null;
-  document.getElementById('edit-modal').classList.remove('active');
-}
-
-// ---- WYSIWYG Toolbar (uses execCommand on contenteditable div) ----
-function focusRich() {
-  document.getElementById('edit-modal-rich').focus();
-}
-
-function execCmd(cmd, val) {
-  focusRich();
-  document.execCommand(cmd, false, val || null);
-}
-
-function execInlineCode() {
-  focusRich();
-  // Wrap selected text in <code> using insertHTML
-  var sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  var range = sel.getRangeAt(0);
-  if (range.collapsed) {
-    // No selection: insert placeholder
-    var code = document.createElement('code');
-    code.textContent = 'code';
-    range.insertNode(code);
-    range.selectNodeContents(code);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } else {
-    var content = range.extractContents();
-    var code = document.createElement('code');
-    code.appendChild(content);
-    range.insertNode(code);
-    range.selectNodeContents(code);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-}
-
-function execLink() {
-  focusRich();
-  var sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  var url = prompt('输入链接地址 (URL):', 'https://');
-  if (!url) return;
-  if (sel.isCollapsed) {
-    // No selection: insert link with placeholder text
-    document.execCommand('insertHTML', false, '<a href="' + escHtml(url) + '" target="_blank">链接文本</a>');
-  } else {
-    document.execCommand('createLink', false, url);
-  }
-}
-
-function execImage() {
-  focusRich();
-  var url = prompt('输入图片地址 (URL):', 'https://');
-  if (!url) return;
-  var alt = prompt('输入图片描述 (可选):', '');
-  document.execCommand('insertHTML', false, '<img src="' + escHtml(url) + '" alt="' + escHtml(alt || '') + '">');
-}
-
-// ---- HTML ↔ Markdown conversion ----
-function htmlToMarkdown(html) {
-  var div = document.createElement('div');
-  div.innerHTML = html;
-
-  function walk(node) {
-    if (node.nodeType === 3) return node.textContent;
-    if (node.nodeType !== 1) return '';
-    var tag = node.nodeName.toLowerCase();
-    var children = Array.from(node.childNodes);
-    var content = children.map(walk).join('');
-
-    switch (tag) {
-      case 'strong': case 'b': return '**' + content + '**';
-      case 'em': case 'i': return '*' + content + '*';
-      case 's': case 'del': case 'strike': return '~~' + content + '~~';
-      case 'code': return '`' + content + '`';
-      case 'u': return content; // No markdown for underline, strip tag
-      case 'a':
-        var href = node.getAttribute('href') || '';
-        return '[' + content + '](' + href + ')';
-      case 'img':
-        var alt = node.getAttribute('alt') || '';
-        var src = node.getAttribute('src') || '';
-        return '![' + alt + '](' + src + ')';
-      case 'p': return content + '\n\n';
-      case 'div': return content + '\n';
-      case 'br': return '\n';
-      case 'li': return content + '\n';
-      case 'ul': return '\n' + content + '\n';
-      case 'ol': return '\n' + content + '\n';
-      case 'blockquote':
-        return content.split('\n').filter(function(l) { return l.trim(); }).map(function(l) { return '> ' + l; }).join('\n') + '\n\n';
-      case 'h1': return '# ' + content + '\n\n';
-      case 'h2': return '## ' + content + '\n\n';
-      case 'h3': return '### ' + content + '\n\n';
-      default: return content;
-    }
-  }
-
-  var result = Array.from(div.childNodes).map(walk).join('');
-  // Clean up: collapse 3+ consecutive newlines to 2, remove trailing whitespace per line
-  result = result.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim();
-  return result;
-}
-
-// Click handler for dashed elements → open modal
-document.addEventListener('click', function(e) {
-  // Don't intercept clicks inside the modal itself
-  if (e.target.closest('#edit-modal')) return;
-  var dashed = e.target.closest('.editable-dashed');
-  if (dashed && _isEditing) {
-    openEditModal(dashed);
-  }
-});
-
-// Close modal on overlay click
-document.getElementById('edit-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeEditModal(false);
-});
-
-// Auto-resize textarea as user types
-document.getElementById('edit-modal-input').addEventListener('input', function() {
-  autoResizeTextarea(this);
-});
-
-// Enter key to confirm for single-line text inputs only (not title/text either, they can be multiline)
-document.getElementById('edit-modal-input').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    var targetType = (_editingTarget && _editingTarget.dataset.type) || '';
-    // Only date fields confirm on Enter; text/title are auto-growing and may use newlines
-    if (targetType === 'date') {
-      e.preventDefault();
-      closeEditModal(true);
-    }
-  }
-});
-
-function delExp(id) {
-  if (!confirm('确定要删除 ' + id + ' 吗？')) return;
-  fetch('/experiments/' + id + '/delete', {method:'DELETE'}).then(function(){location.href='/';});
-}
-
-function escHtml(s) {
-  var d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-// 标签双击编辑（仅查看模式）
-function editTag(pill) {
-  if (_isEditing) return;
-  if (pill.querySelector('input, button')) return;
-  var orig = pill.textContent.trim();
-  pill.innerHTML = '<input type="text" value="' + escHtml(orig) + '" style="font-size:0.75rem;width:8em;padding:0 2px">';
-  var inp = pill.querySelector('input');
-  inp.focus(); inp.select();
-  function commit() { var v = inp.value.trim(); if (v) pill.textContent = v; else pill.textContent = orig; }
-  inp.addEventListener('blur', commit);
-  inp.addEventListener('keydown', function(ev) {
-    if (ev.key === 'Enter') commit();
-    if (ev.key === 'Escape') { pill.textContent = orig; }
-  });
-}
-
-// ---- Clean AI-generated numbering from SOP items ----
-function stripSopPrefix(s) {
-  return s.replace(/^(\d+[\.\、\)]\s*|步骤\s*\d+\s*[：:]\s*|Step\s*\d+\s*[：:]\s*|第[一二三四五六七八九十\d]+步[：:]\s*)+/i, '').trim();
-}
-
-// ---- Clean [ ] / [x] checkbox prefixes from next steps ----
-function stripCheckbox(s) {
-  return s.replace(/^\[[ xX]\]\s*/, '');
-}
-
-// ---- Apply display cleaning on page load ----
-(function cleanDisplay() {
-  var sopList = document.getElementById('sop-list');
-  if (sopList) {
-    sopList.querySelectorAll('li').forEach(function(li) {
-      li.textContent = stripSopPrefix(li.textContent);
-    });
-  }
-  var nsView = document.getElementById('next-steps-view');
-  if (nsView) {
-    nsView.querySelectorAll('.next-step-item').forEach(function(div) {
-      div.textContent = stripCheckbox(div.textContent);
-    });
-  }
+// Clean SOP/next-steps numbering
+(function(){
+  var sopList=document.getElementById('sop-list');if(sopList){sopList.querySelectorAll('li').forEach(function(li){li.textContent=li.textContent.replace(/^(\d+[\.\、\)]\s*|Step\s*\d+\s*[：:]\s*)+/i,'').trim();});}
+  var nsView=document.getElementById('next-steps-view');if(nsView){nsView.querySelectorAll('div').forEach(function(div){div.textContent=div.textContent.replace(/^\[[ xX]\]\s*/,'');});}
 })();
 
-// ===== Child Agent Modal =====
-var _childState = null, _childPreview = null, _childExpId = '{{ exp.id }}';
+// ===== Child Agent =====
+var _childState=null,_childPreview=null,_childExpId='{{ exp.id }}',_childLegacyData=null;
 
-function _childIsInternal(m) {
-  if (m.role === 'system') return true;
-  if (m.role === 'assistant' && m.tool_calls && (!m.content || !String(m.content).trim())) return true;
-  if (m.role === 'tool') return true;
-  return false;
-}
+function _childSessionKey(){return 'exdiary_child_'+_childExpId;}
+function loadChildSession(){try{var s=sessionStorage.getItem(_childSessionKey());return s?JSON.parse(s):null;}catch(e){return null;}}
+function saveChildSession(){try{if(_childState)sessionStorage.setItem(_childSessionKey(),JSON.stringify(_childState));}catch(e){}}
+function clearChildSession(){try{sessionStorage.removeItem(_childSessionKey());}catch(e){}}
 
-function _childSessionKey() { return 'exdiary_child_' + _childExpId; }
+function _childIsInternal(m){if(m.role==='system')return true;if(m.role==='assistant'&&m.tool_calls&&(!m.content||!String(m.content).trim()))return true;if(m.role==='tool')return true;return false;}
 
-function loadChildSession() {
-  try { var s = sessionStorage.getItem(_childSessionKey()); return s ? JSON.parse(s) : null; }
-  catch(e) { return null; }
-}
-function saveChildSession() {
-  try { if(_childState) sessionStorage.setItem(_childSessionKey(), JSON.stringify(_childState)); }
-  catch(e) {}
-}
-function clearChildSession() {
-  try { sessionStorage.removeItem(_childSessionKey()); } catch(e) {}
-}
-
-function openChildAgent() {
+function openChildAgent(){
   document.getElementById('child-modal').classList.add('active');
-  document.getElementById('child-msgs').innerHTML = '<div class="child-loading">加载中...</div>';
+  document.getElementById('child-msgs').innerHTML='<div style="text-align:center;opacity:0.5;padding:2rem">Loading...</div>';
   setChildInputEnabled(false);
-  // 尝试从 sessionStorage 恢复上次的对话状态
-  var saved = loadChildSession();
-  var body = {message: ''};
-  if (saved) { body.state = saved; _childState = saved; }
-  fetch('/api/exp/'+_childExpId+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json();})
-    .then(function(data){
-      if (data.is_legacy) {
-        document.getElementById('child-legacy').style.display='';
-        _childLegacyData = data.exp_data;
-        setChildInputEnabled(true);
-      } else {
-        _childState = data.state;
-        saveChildSession();
-        renderChildHistory(data);
-        setChildInputEnabled(true);
-      }
-    }).catch(function(e){
-      document.getElementById('child-msgs').innerHTML = '<div class="child-loading" style="color:#c00">加载失败，请关闭重试</div>';
-      setChildInputEnabled(true);
-    });
-}
-function setChildInputEnabled(enabled) {
-  document.getElementById('child-input').disabled = !enabled;
-  document.getElementById('btn-child-send').disabled = !enabled;
-}
-function confirmLegacy() {
-  document.getElementById('child-legacy').style.display='none';
-  document.getElementById('child-msgs').innerHTML = '<div class="child-loading">加载中...</div>';
-  setChildInputEnabled(false);
-  fetch('/api/exp/'+_childExpId+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'我想修改 '+_childExpId+'，请先加载当前实验数据，然后告诉我有哪些可以修改的。',is_legacy:true})})
-    .then(function(r){return r.json();}).then(function(data){
-      _childState=data.state; saveChildSession(); renderChildHistory(data);
-      setChildInputEnabled(true);
-    }).catch(function(e){
-      document.getElementById('child-msgs').innerHTML = '<div class="child-loading" style="color:#c00">加载失败，请关闭重试</div>';
-      setChildInputEnabled(true);
-    });
-}
-function closeChildAgent() {
-  document.getElementById('child-modal').classList.remove('active');
-  if (_childState && _childState.modified_values && Object.keys(_childState.modified_values).length>0) {
-    setTimeout(function(){location.reload();},1500);
-  }
-}
-function sendChildMsg() {
-  var inp=document.getElementById('child-input'), msg=inp.value.trim();
-  if (!msg) return; inp.value='';
-  var body={message:msg}; if (_childState) body.state = _childState;
+  var saved=loadChildSession();
+  var body={message:''};if(saved){body.state=saved;_childState=saved;}
   fetch('/api/exp/'+_childExpId+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){return r.json();}).then(function(data){
-      _childState=data.state;
-      saveChildSession();
-      if(data.type==='extract'&&data.preview){showChildPreview(data.preview);}
-      else { renderChildHistory(data); }
-    });
+      if(data.is_legacy){document.getElementById('child-legacy').style.display='';_childLegacyData=data.exp_data;setChildInputEnabled(true);}
+      else{_childState=data.state;saveChildSession();renderChildHistory(data);setChildInputEnabled(true);}
+    }).catch(function(e){document.getElementById('child-msgs').innerHTML='<div style="text-align:center;color:var(--red);padding:2rem">Load failed</div>';setChildInputEnabled(true);});
 }
-function appendChildMsg(role,content){
-  var c=document.getElementById('child-msgs');
-  var d=document.createElement('div'); d.className='chat-msg '+role;
-  d.innerHTML='<div class="chat-bubble">'+(role==='agent'?marked.parse(content):escHtml(content))+'</div>';
-  c.appendChild(d); c.scrollTop=c.scrollHeight;
+function setChildInputEnabled(e){document.getElementById('child-input').disabled=!e;document.getElementById('btn-child-send').disabled=!e;}
+function confirmLegacy(){
+  document.getElementById('child-legacy').style.display='none';document.getElementById('child-msgs').innerHTML='<div style="text-align:center;opacity:0.5;padding:2rem">Loading...</div>';setChildInputEnabled(false);
+  fetch('/api/exp/'+_childExpId+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Load experiment data for modification',is_legacy:true})})
+    .then(function(r){return r.json();}).then(function(data){_childState=data.state;saveChildSession();renderChildHistory(data);setChildInputEnabled(true);});
 }
-function showChildPreview(data){
-  _childPreview = data;
-  document.getElementById('child-preview').style.display='';
-  var c=document.getElementById('child-preview-content');
-  c.innerHTML='<h4>预览修改</h4>';
-  ['title','status','tags','purpose','conclusion'].forEach(function(f){
-    if(data[f]) c.innerHTML+='<div><strong>'+f+'</strong>: '+escHtml(typeof data[f]==='string'?data[f]:JSON.stringify(data[f]))+'</div>';
-  });
-  c.innerHTML+='<button onclick="confirmChildChange()">确认修改</button>';
-}
-function confirmChildChange(){
-  var body = {preview: _childPreview || {}};
-  if (_childState) body.state = _childState;
-  fetch('/api/exp/'+_childExpId+'/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json();}).then(function(d){
-      if(d.ok){
-        clearChildSession();
-        document.getElementById('child-preview').style.display='none';
-        closeChildAgent();
-      }
-    });
-}
-function renderChildHistory(data){
-  var container = document.getElementById('child-msgs');
-  container.innerHTML = '';  // 全量重绘，避免重复
-  var msgs = data.state ? data.state.history : [];
-  var split = (data.state && data.state._child_initial_history_len) || 0;
-  var hasHistory = false;
-  for (var i = 0; i < msgs.length; i++) {
-    var m = msgs[i];
-    // 在线程历史和孩子Agent消息之间插入分隔线
-    if (i === split && split > 0 && hasHistory) {
-      var sep = document.createElement('div');
-      sep.className = 'child-history-sep';
-      sep.innerHTML = '<span>—— 以下为本次修改对话 ——</span>';
-      container.appendChild(sep);
-    }
-    if (_childIsInternal(m)) continue;
-    if (m.role === 'user' && m.content) {
-      appendChildMsg('user', m.content);
-      if (i < split) hasHistory = true;
-    } else if (['assistant','agent'].includes(m.role) && m.content) {
-      appendChildMsg('agent', m.content);
-      if (i < split) hasHistory = true;
-    }
-  }
-  container.scrollTop = container.scrollHeight;
-}
-</script>
+function closeChildAgent(){document.getElementById('child-modal').classList.remove('active');if(_childState&&_childState.modified_values&&Object.keys(_childState.modified_values).length>0){setTimeout(function(){location.reload();},1500);}}
+function sendChildMsg(){var inp=document.getElementById('child-input'),msg=inp.value.trim();if(!msg)return;inp.value='';appendChildMsg('user',msg);var body={message:msg};if(_childState)body.state=_childState;fetch('/api/exp/'+_childExpId+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(data){_childState=data.state;saveChildSession();if(data.type==='extract'&&data.preview){showChildPreview(data.preview);}else{renderChildHistory(data);}});}
+function appendChildMsg(role,content){var c=document.getElementById('child-msgs');var d=document.createElement('div');d.className='chat-msg '+role;var bubbleStyle=role==='agent'?'background:var(--off-white);border:2px solid var(--black);padding:0.4rem 0.7rem;max-width:85%;font-size:0.85rem':'background:var(--black);color:var(--white);padding:0.4rem 0.7rem;max-width:85%;font-size:0.85rem';var justify=role==='user'?'justify-content:flex-end':'';d.style.cssText='display:flex;margin-bottom:0.4rem;'+justify;d.innerHTML='<div style="'+bubbleStyle+'">'+(role==='agent'&&typeof marked!=='undefined'?marked.parse(content):escHtml(content))+'</div>';c.appendChild(d);c.scrollTop=c.scrollHeight;}
+function showChildPreview(data){_childPreview=data;document.getElementById('child-preview').style.display='';var c=document.getElementById('child-preview-content');c.innerHTML='<h4 style="font-weight:700;text-transform:uppercase">Preview Changes</h4>';['title','status','tags','purpose','conclusion'].forEach(function(f){if(data[f])c.innerHTML+='<div style="margin:0.3rem 0"><strong>'+f+'</strong>: '+escHtml(typeof data[f]==='string'?data[f]:JSON.stringify(data[f]))+'</div>';});c.innerHTML+='<button onclick="confirmChildChange()" style="margin-top:0.5rem">Confirm</button>';}
+function confirmChildChange(){var body={preview:_childPreview||{}};if(_childState)body.state=_childState;fetch('/api/exp/'+_childExpId+'/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){if(d.ok){clearChildSession();document.getElementById('child-preview').style.display='none';closeChildAgent();}});}
+function renderChildHistory(data){var container=document.getElementById('child-msgs');container.innerHTML='';var msgs=data.state?data.state.history:[];var split=(data.state&&data.state._child_initial_history_len)||0;var hasHistory=false;for(var i=0;i<msgs.length;i++){var m=msgs[i];if(i===split&&split>0&&hasHistory){var sep=document.createElement('div');sep.style.cssText='text-align:center;margin:0.6rem 0;font-weight:700;font-size:0.7rem;opacity:0.5';sep.innerHTML='<span style="background:var(--white);padding:0 0.5rem">—— Modification session ——</span>';container.appendChild(sep);}if(_childIsInternal(m))continue;if(m.role==='user'&&m.content){appendChildMsg('user',m.content);if(i<split)hasHistory=true;}else if(['assistant','agent'].includes(m.role)&&m.content){appendChildMsg('agent',m.content);if(i<split)hasHistory=true;}}container.scrollTop=container.scrollHeight;}
 
-<div class="edit-modal-overlay" id="child-modal">
-<div class="edit-modal-box child-agent-box">
-<div class="child-header"><span>修改 {{ exp.id }}</span><button onclick="closeChildAgent()" class="child-close-btn">&#x2715; 关闭</button></div>
-<div id="child-legacy" class="flash" style="display:none;margin-bottom:0.5rem">此实验在对话系统上线前创建，没有历史对话记录。你仍可以与 Agent 对话修改它。<button onclick="confirmLegacy()" style="margin-left:0.5rem">知道了，继续</button></div>
-<div id="child-msgs" style="flex:1;overflow-y:auto;padding:0.5rem;min-height:200px;max-height:50vh"></div>
-<div id="child-preview" style="display:none;padding:0.5rem;background:#f8f8f8;border-radius:6px;margin:0.5rem"><div id="child-preview-content"></div></div>
-<div style="display:flex;gap:0.3rem;padding:0.5rem;border-top:1px solid #ddd"><input id="child-input" placeholder="输入修改..." style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChildMsg();}"><button id="btn-child-send" onclick="sendChildMsg()">发送</button></div>
-</div>
-</div>
-<style>
-.child-agent-box{max-width:520px;width:95%;height:70vh;display:flex;flex-direction:column}
-.child-header{padding:0.5rem;font-weight:600;border-bottom:1px solid #ddd}
-.child-agent-box .chat-msg{display:flex;margin-bottom:0.4rem}
-.child-agent-box .chat-msg.user{justify-content:flex-end}
-.child-agent-box .chat-msg.agent .chat-bubble{background:#f0f4f8;padding:0.4rem 0.7rem;border-radius:10px;max-width:85%}
-.child-agent-box .chat-msg.user .chat-bubble{background:var(--pico-primary,#0071e3);color:#fff;padding:0.4rem 0.7rem;border-radius:10px;max-width:85%}
-.child-agent-box #child-msgs{display:flex;flex-direction:column;gap:0.3rem}
-.child-close-btn{float:right;border:1px solid #ccc;background:#f5f5f5;padding:0.2rem 0.6rem;border-radius:6px;font-size:0.85rem;cursor:pointer;transition:all 0.15s}
-.child-close-btn:hover{background:#e53935;color:#fff;border-color:#e53935}
-.child-history-sep{text-align:center;margin:0.6rem 0;color:#999;font-size:0.75rem}
-.child-history-sep span{background:#fff;padding:0 0.5rem}
-.child-history-sep::before{content:'';display:block;border-top:1px solid #e0e0e0;margin-bottom:-0.55rem}
-.child-loading{text-align:center;color:#999;padding:2rem 0;font-size:0.85rem}
-</style>
-<script>
-// 点击遮罩关闭子 Agent 模态
-document.getElementById('child-modal').addEventListener('click',function(e){
-  if(e.target===this) closeChildAgent();
-});
+// Child modal overlay click no longer closes — use Close button
 </script>
 
 {% endblock %}

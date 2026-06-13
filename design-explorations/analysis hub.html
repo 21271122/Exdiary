@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Analysis Hub - De Stijl Lab</title>
+    <style>
+        /* 基础重置与黄色底色 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #F8D030; color: #111; border: 12px solid #111; min-height: 100vh; padding-bottom: 50px;}
+
+        /* 顶部 Header */
+        .header { padding: 30px 20px; border-bottom: 12px solid #111; background-color: #FFFFFF;}
+        .header h1 { font-size: 2.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin: 0; line-height: 1; }
+
+        /* 内容区：居中卡片布局 */
+        .content { padding: 40px; display: flex; flex-direction: column; align-items: center;}
+
+        /* 主几何框架 */
+        .chart-frame {
+            border: 6px solid #111; background-color: #FFFFFF; box-shadow: 12px 12px 0px #111;
+            padding: 30px; max-width: 800px; width: 100%; position: relative;
+        }
+
+        /* 极简阶梯图风格 */
+        .chart { 
+            height: 300px; width: 100%; border: 4px solid #111; border-radius: 0; margin-bottom: 20px;
+            background-color: #f4f4f4; background-image: repeating-linear-gradient(#111 0, #111 1px, transparent 1px, transparent 40px);
+            position: relative;
+        }
+        .step-line {
+            position: absolute; left: 0; bottom: 0; width: 100%; height: 100%;
+            background-image: linear-gradient(to top right, #1D54A6 0, #1D54A6 1px, transparent 1px, transparent 100%),
+                              linear-gradient(to top right, #111 0, #111 1px, transparent 1px, transparent 100%);
+            /* 这里使用纯 CSS 简单模拟一个阶梯效果，实际会用图表库 */
+            clip-path: polygon(0 80%, 20% 80%, 20% 60%, 40% 60%, 40% 40%, 60% 40%, 60% 20%, 80% 20%, 80% 5%, 100% 5%);
+            background-color: rgba(29, 84, 166, 0.2); border-top: 4px solid #1D54A6;
+        }
+
+        /* 数据块布局 */
+        .stats { display: flex; gap: 15px; width: 100%; }
+        .stat-block { border: 4px solid #111; padding: 15px; font-weight: bold; flex: 1; text-align: center; }
+        .stat-blue { background-color: #1D54A6; color: white; }
+        .stat-red { background-color: #E32636; color: white; }
+
+        /* AI 分析报告 */
+        .report-section { max-width: 800px; width: 100%; margin-top: 30px; border: 4px solid #111; background-color: #FFFFFF; padding: 20px;}
+        .report-section h3 { margin-bottom: 10px;}
+        .report-text { font-family: 'Courier New', Courier, monospace; color: #444; line-height: 1.6; }
+
+        /* 底部状态栏 */
+        .bottom-nav { position: fixed; bottom: 0; width: 100%; background-color: #111; color: #FFF; padding: 10px 20px; font-weight: bold; display: flex; justify-content: space-between; z-index: 100;}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Analysis Hub</h1>
+    </header>
+
+    <main class="content">
+        <div class="chart-frame">
+            <div class="chart">
+                <div class="step-line"></div>
+            </div>
+            <div class="stats">
+                <div class="stat-block stat-blue">平均产率<br>88%</div>
+                <div class="stat-block stat-red">合成时间<br>4h</div>
+                <div class="stat-block">能垒差异<br>0.15 eV</div>
+            </div>
+        </div>
+        
+        <section class="report-section">
+            <h3>AI Summary</h3>
+            <div class="report-text">
+                [系统分析完毕] 当前 DFT 数据符合预期趋势。对于 ORR 反应：d-band center 向远离费米能级方向移动 (d-band shift 趋势明显)，建议检查 N2 side-on 吸附构型。
+            </div>
+        </section>
+    </main>
+    
+    <footer class="bottom-nav">
+        <span>STIJL LABS AGENT</span>
+        <span>SYSTEM ONLINE</span>
+    </footer>
+</body>
+</html>

@@ -1,119 +1,105 @@
 {% extends "base.html" %}
 {% block title %}{{ analysis.get('id', '分析报告') }}{% endblock %}
 {% block page_id %}analysis-detail{% endblock %}
+{% block page_bg %}background-color: #fdfaef;{% endblock %}
+{% block topbar_style %}
+.topbar { background: var(--yellow); }
+.topbar-back { background: var(--white); color: var(--black); border-color: var(--white); }
+.topbar-back:hover { background: var(--yellow); color: var(--white); }
+{% endblock %}
 {% block content %}
 
 <div style="margin-bottom:1rem">
-  <a href="/analyze" style="font-size:0.85rem;color:var(--pico-muted-color)">&larr; 返回分析列表</a>
+  <a href="/analyze" style="font-weight:700;font-size:0.8rem;letter-spacing:1px;text-transform:uppercase;opacity:0.5;text-decoration:none">&larr; Back to Analysis List</a>
 </div>
 
-<h1 style="margin-bottom:0.3rem">{{ analysis.get('id', '') }}</h1>
-<div style="font-size:0.85rem;color:var(--pico-muted-color);margin-bottom:1rem">{{ analysis.get('timestamp', '') }}</div>
+<h1 style="border-bottom:none;padding-bottom:0;margin-bottom:0.3rem">{{ analysis.get('id', '') }}</h1>
+<div style="font-weight:700;font-size:0.75rem;opacity:0.5;letter-spacing:1px;margin-bottom:1rem">{{ analysis.get('timestamp', '') }}</div>
 
-{# 分析问题 #}
-<div style="background:var(--pico-card-background-color);padding:0.8rem 1rem;border-radius:8px;margin-bottom:1rem">
-  <strong style="font-size:0.85rem">分析问题</strong>
-  <p style="margin:0.3rem 0 0 0;font-size:0.9rem">{{ analysis.get('question', '') }}</p>
+{# Question #}
+<div style="border:4px solid var(--black);padding:0.8rem 1rem;margin-bottom:1rem;background:var(--off-white)">
+  <strong style="font-size:0.78rem;text-transform:uppercase;letter-spacing:1px">Question</strong>
+  <p style="margin:0.3rem 0 0 0;font-weight:600;font-size:0.9rem">{{ analysis.get('question', '') }}</p>
 </div>
 
-{# 参与实验 #}
+{# Referenced experiments #}
 {% set refs = analysis.get('selected_ids', []) %}
 {% if refs %}
-<div style="background:var(--pico-card-background-color);padding:0.8rem 1rem;border-radius:8px;margin-bottom:1rem">
-  <strong style="font-size:0.85rem">参与实验（{{ refs|length }}）</strong>
+<div style="border:4px solid var(--black);padding:0.8rem 1rem;margin-bottom:1rem">
+  <strong style="font-size:0.78rem;text-transform:uppercase;letter-spacing:1px">Referenced Experiments ({{ refs|length }})</strong>
   <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.3rem">
     {% for rid in refs %}
-    <a href="/experiments/{{ rid }}" class="tag-pill" style="text-decoration:none;font-size:0.8rem">{{ rid }}</a>
+    <a href="/experiments/{{ rid }}" class="tag-pill" style="text-decoration:none;font-weight:700">{{ rid }}</a>
     {% endfor %}
   </div>
 </div>
 {% endif %}
 
-{# 操作栏 #}
+{# Actions #}
 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
-  <button class="outline secondary" style="font-size:0.8rem" onclick="openChildAgent()">&#x1f4ac; 与 Agent 对话</button>
-  <button class="outline secondary" style="font-size:0.8rem" onclick="window.print()">&#x1f5a8; 打印</button>
-  <button class="outline secondary" style="font-size:0.8rem;color:#e53935;border-color:#e53935" onclick="deleteAnalysis()">&#x2715; 删除</button>
+  <button class="outline" style="font-size:0.75rem" onclick="openChildAgent()">Chat with Agent</button>
+  <button class="outline" style="font-size:0.75rem" onclick="window.print()">Print</button>
+  <button class="outline danger" style="font-size:0.75rem" onclick="deleteAnalysis()">Delete</button>
 </div>
 
-{# 报告正文 #}
-<hr>
-<div class="markdown-content" style="line-height:1.7">{{ analysis.get('analysis', '') }}</div>
+<hr style="border:3px solid var(--black)">
 
-{# 子 Agent 模态面板 #}
+{# Report body #}
+<div class="markdown-content" style="line-height:1.7;margin-top:1rem">{{ analysis.get('analysis', '') }}</div>
+
+{# Child Agent Modal #}
 <div class="edit-modal-overlay" id="child-agent-modal">
-  <div class="edit-modal-box child-agent-box">
-    <div class="child-agent-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
-      <span style="font-weight:600">分析对话 — {{ analysis.get('id', '') }}</span>
-      <button class="close-btn" onclick="closeChildAgent()" style="background:none;border:none;font-size:1.2rem;cursor:pointer">&times;</button>
+  <div class="edit-modal-box" style="max-width:520px;max-height:75vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
+      <span style="font-weight:700;text-transform:uppercase;letter-spacing:1px">Analysis Chat — {{ analysis.get('id', '') }}</span>
+      <button onclick="closeChildAgent()" style="background:none;border:2px solid var(--black);font-size:1.2rem;cursor:pointer;font-weight:700">&times;</button>
     </div>
-    <div id="child-chat-messages" style="flex:1;overflow-y:auto;min-height:200px;max-height:55vh;padding:0.5rem;border:1px solid #ddd;border-radius:8px;margin-bottom:0.5rem">
-      <div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">加载中...</div>
+    <div id="child-chat-messages" style="flex:1;overflow-y:auto;min-height:200px;max-height:55vh;padding:0.5rem;border:3px solid var(--black);margin-bottom:0.5rem">
+      <div style="text-align:center;padding:1rem;opacity:0.5">Loading...</div>
     </div>
-    <div class="child-chat-input-area" style="display:flex;gap:0.5rem">
-      <textarea id="child-chat-input" placeholder="输入修改内容..." rows="2" style="flex:1;resize:none;font-size:0.9rem;padding:0.5rem;border-radius:8px;border:1px solid #ccc;font-family:inherit"></textarea>
-      <button id="btn-child-send" onclick="sendChildMessage()" style="padding:0.4rem 1rem;font-size:0.85rem;border:none;border-radius:8px;background:var(--pico-primary);color:#fff;cursor:pointer">发送</button>
+    <div style="display:flex;gap:0.5rem">
+      <textarea id="child-chat-input" placeholder="Enter modification..." rows="2" style="flex:1;resize:none;font-size:0.9rem;font-family:inherit"></textarea>
+      <button id="btn-child-send" onclick="sendChildMessage()" style="padding:0.4rem 1rem">Send</button>
     </div>
   </div>
 </div>
 
-<style>
-.child-agent-box { max-width: 520px; max-height: 75vh; display: flex; flex-direction: column; }
-</style>
-
 <script>
 window.savePageState = function() { return {scrollY: window.scrollY}; };
-window.restorePageState = function(state) {
-  if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY);
-};
+window.restorePageState = function(state) { if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY); };
 
-function escHtml(s) {
-  var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
-}
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
 
 function deleteAnalysis() {
-  if (!confirm('确定要删除 {{ analysis.get("id", "") }} 吗？')) return;
+  if (!confirm('Delete {{ analysis.get("id", "") }}?')) return;
   fetch('/api/analysis-history/{{ analysis.get("id", "") }}', {method:'DELETE'})
     .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (r.ok) navigateToPage('/analyze');
-      else alert('删除失败');
-    });
+    .then(function(r) { if (r.ok) navigateToPage('/analyze'); else alert('Failed'); });
 }
 
-// ---- Child Agent ----
 var _childState = null;
 var _analId = '{{ analysis.get("id", "") }}';
 
 async function openChildAgent() {
   document.getElementById('child-agent-modal').classList.add('active');
-  // Empty message = just open, don't run LLM
   var r = await fetch('/api/analysis/' + _analId + '/chat', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: ''})
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:''})
   });
   var data = await r.json();
   if (data.ok) {
     _childState = data.state;
-    document.getElementById('child-chat-messages').innerHTML = '<div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">已加载分析上下文，可以开始对话修改。</div>';
+    document.getElementById('child-chat-messages').innerHTML = '<div style="text-align:center;padding:1rem;opacity:0.5">Context loaded. You can start chatting.</div>';
   }
 }
 
 async function sendChildMessage() {
   var input = document.getElementById('child-chat-input');
-  var msg = input.value.trim();
-  if (!msg) return;
+  var msg = input.value.trim(); if (!msg) return;
   input.value = '';
   appendChildMsg('user', msg);
-
-  var body = {message: msg};
-  if (_childState) body.state = _childState;
-
+  var body = {message: msg}; if (_childState) body.state = _childState;
   var r = await fetch('/api/analysis/' + _analId + '/chat', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   });
   var data = await r.json();
   _childState = data.state;
@@ -123,20 +109,17 @@ async function sendChildMessage() {
 function appendChildMsg(role, content) {
   var container = document.getElementById('child-chat-messages');
   var div = document.createElement('div');
-  div.className = 'chat-msg ' + role;
-  var avatar = role === 'agent' ? '&#x1F9EA;' : '&#x1F464;';
-  div.innerHTML = '<div class="chat-avatar">' + avatar + '</div><div class="chat-bubble">' + (typeof marked !== 'undefined' ? marked.parse(String(content)) : escHtml(content)) + '</div>';
+  div.style.cssText = 'display:flex;margin-bottom:0.4rem;' + (role==='user'?'justify-content:flex-end':'');
+  var bubbleStyle = role==='agent'
+    ? 'background:var(--off-white);padding:0.4rem 0.7rem;border:2px solid var(--black);max-width:85%;font-size:0.85rem'
+    : 'background:var(--black);color:var(--white);padding:0.4rem 0.7rem;border:2px solid var(--black);max-width:85%;font-size:0.85rem';
+  div.innerHTML = '<div style="'+bubbleStyle+'">'+ (typeof marked!=='undefined'?marked.parse(String(content)):escHtml(content)) +'</div>';
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
 
-function closeChildAgent() {
-  document.getElementById('child-agent-modal').classList.remove('active');
-}
-
-document.getElementById('child-agent-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeChildAgent();
-});
+function closeChildAgent() { document.getElementById('child-agent-modal').classList.remove('active'); }
+document.getElementById('child-agent-modal').addEventListener('click', function(e) { if(e.target===this) closeChildAgent(); });
 </script>
 
 {% endblock %}

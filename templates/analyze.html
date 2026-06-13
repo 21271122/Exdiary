@@ -1,103 +1,80 @@
 {% extends "base.html" %}
 {% block title %}分析报告{% endblock %}
 {% block page_id %}analyze{% endblock %}
+{% block page_bg %}background-color: #fdfaef;{% endblock %}
+{% block topbar_style %}
+.topbar { background: var(--yellow); }
+.topbar-back { background: var(--white); color: var(--black); border-color: var(--white); }
+.topbar-back:hover { background: var(--yellow); color: var(--white); }
+{% endblock %}
 {% block content %}
 
-<h1>&#x1f4ca; 分析报告</h1>
-<p style="color:var(--pico-muted-color)">在对话页面让 Agent 帮你分析实验数据，分析报告会自动归档到这里。</p>
+<h1 style="border-bottom:none;padding-bottom:0">Analysis Hub</h1>
+<p style="font-weight:700;font-size:0.85rem;opacity:0.5;margin-bottom:1.5rem">AI-powered cross-experiment analysis</p>
 
 <div id="analysis-list">
-  <div style="text-align:center;padding:1rem;color:var(--pico-muted-color)">加载中...</div>
+  <div style="text-align:center;padding:1rem;opacity:0.5">Loading...</div>
 </div>
 
 <div id="empty-state" class="empty-state" style="display:none">
-  <h3>&#x1f4ca; 还没有分析报告</h3>
-  <p>在对话页面让 Agent 帮你分析实验吧。说出你的分析需求，Agent 会引导你完成整个过程。</p>
-  <a href="/new" role="button">&#x1f4ac; 前往对话</a>
+  <h3>No Analysis Reports Yet</h3>
+  <p>Start a conversation with the Agent and ask it to analyze your experiments.</p>
+  <a href="/new" role="button">Go to Chat</a>
 </div>
 
 <style>
 .analysis-card {
-  background: var(--pico-card-background-color);
-  border: 1px solid var(--pico-card-border-color, #ddd);
-  border-radius: 10px;
+  border: 4px solid var(--black);
+  background: var(--white);
   padding: 1rem 1.2rem;
   margin-bottom: 1rem;
   cursor: pointer;
-  transition: box-shadow 0.15s;
+  box-shadow: 6px 6px 0px #111;
+  transition: transform 0.15s, box-shadow 0.15s;
 }
-.analysis-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
-.analysis-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.3rem;
-}
-.analysis-id { font-weight: 600; font-size: 0.85rem; color: var(--pico-primary); }
-.analysis-date { font-size: 0.78rem; color: var(--pico-muted-color); }
-.analysis-title { font-weight: 600; font-size: 1rem; margin-bottom: 0.3rem; }
-.analysis-question {
-  font-size: 0.82rem; color: var(--pico-muted-color);
-  margin-bottom: 0.4rem;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.analysis-summary {
-  font-size: 0.85rem; color: var(--pico-color, #333);
-  margin-bottom: 0.5rem; line-height: 1.5;
-}
-.analysis-refs { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-.analysis-refs a { font-size: 0.75rem; color: var(--pico-primary); text-decoration: none; }
-.analysis-refs a:hover { text-decoration: underline; }
-.analysis-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.analysis-actions button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
+.analysis-card:hover { transform: translate(-3px, -3px); box-shadow: 10px 10px 0px #111; }
+.analysis-id { font-weight:700; font-size:0.8rem; }
+.analysis-date { font-size:0.75rem; font-weight:600; opacity:0.5; }
+.analysis-question { font-size:0.85rem; font-weight:600; margin:0.4rem 0; }
+.analysis-refs { display:flex; gap:0.3rem; flex-wrap:wrap; margin-bottom:0.5rem; }
+.analysis-refs a { font-size:0.72rem; font-weight:700; color:var(--black); text-decoration:none; border:2px solid var(--black); padding:0.1rem 0.4rem; }
+.analysis-refs a:hover { background:var(--black); color:var(--white); }
 </style>
 
 <script>
 window.savePageState = function() { return {scrollY: window.scrollY}; };
-window.restorePageState = function(state) {
-  if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY);
-};
+window.restorePageState = function(state) { if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY); };
 
-function escHtml(s) {
-  var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
-}
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
 
 fetch('/api/analysis-history')
   .then(function(r) { return r.json(); })
   .then(function(data) {
     var list = document.getElementById('analysis-list');
     var empty = document.getElementById('empty-state');
-    if (!Array.isArray(data) || data.length === 0) {
-      list.style.display = 'none';
-      empty.style.display = '';
-      return;
-    }
+    if (!Array.isArray(data) || data.length === 0) { list.style.display='none'; empty.style.display=''; return; }
     var html = '';
     data.forEach(function(a) {
-      var ids = (a.selected_ids || []).join(', ');
-      var refLinks = (a.selected_ids || []).map(function(id) {
-        return '<a href="/experiments/' + escHtml(id) + '" onclick="event.stopPropagation()">' + escHtml(id) + '</a>';
+      var refLinks = (a.selected_ids||[]).map(function(id) {
+        return '<a href="/experiments/'+escHtml(id)+'" onclick="event.stopPropagation()">'+escHtml(id)+'</a>';
       }).join(' ');
-      html += '<article class="analysis-card" onclick="navigateToPage(\'/analysis/' + escHtml(a.id || '') + '\')">';
-      html += '<div class="analysis-header"><span class="analysis-id">' + escHtml(a.id || '') + '</span><span class="analysis-date">' + escHtml(a.timestamp || '') + '</span></div>';
-      html += '<div class="analysis-question">问题：' + escHtml((a.question || '全盘分析')) + '</div>';
-      if (refLinks) html += '<div class="analysis-refs">关联实验：' + refLinks + '</div>';
-      html += '<div class="analysis-actions">';
-      html += '<button class="outline secondary" onclick="event.stopPropagation();navigateToPage(\'/analysis/' + escHtml(a.id || '') + '\')">查看完整报告 &rarr;</button>';
-      html += '<button class="outline secondary" style="color:#e53935;border-color:#e53935" onclick="event.stopPropagation();deleteAnalysis(\'' + escHtml(a.id || '') + '\')">删除</button>';
+      html += '<article class="analysis-card" onclick="navigateToPage(\'/analysis/'+escHtml(a.id||'')+'\')">';
+      html += '<div style="display:flex;justify-content:space-between"><span class="analysis-id">'+escHtml(a.id||'')+'</span><span class="analysis-date">'+escHtml(a.timestamp||'')+'</span></div>';
+      html += '<div class="analysis-question">' + escHtml((a.question||'Full Analysis')) + '</div>';
+      if (refLinks) html += '<div class="analysis-refs">'+refLinks+'</div>';
+      html += '<div style="display:flex;gap:0.5rem">';
+      html += '<button class="outline" style="font-size:0.7rem;padding:0.2rem 0.6rem" onclick="event.stopPropagation();navigateToPage(\'/analysis/'+escHtml(a.id||'')+'\')">View Report</button>';
+      html += '<button class="outline danger" style="font-size:0.7rem;padding:0.2rem 0.6rem" onclick="event.stopPropagation();deleteAnalysis(\''+escHtml(a.id||'')+'\')">Delete</button>';
       html += '</div></article>';
     });
-    list.innerHTML = html;
-    list.style.display = '';
-    empty.style.display = 'none';
+    list.innerHTML = html; list.style.display=''; empty.style.display='none';
   });
 
 function deleteAnalysis(aid) {
-  if (!confirm('确定要删除 ' + aid + ' 吗？')) return;
+  if (!confirm('Delete ' + aid + '?')) return;
   fetch('/api/analysis-history/' + aid, {method:'DELETE'})
     .then(function(r) { return r.json(); })
-    .then(function(r) {
-      if (r.ok) location.reload();
-      else alert('删除失败');
-    });
+    .then(function(r) { if (r.ok) location.reload(); else alert('Failed'); });
 }
 </script>
 

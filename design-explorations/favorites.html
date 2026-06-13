@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Favorites - De Stijl Lab</title>
+    <style>
+        /* 基础重置 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #FFFFFF; color: #111; border: 12px solid #111; min-height: 100vh; padding-bottom: 50px;}
+
+        /* 顶部 Header：大面积蓝色块 */
+        .header {
+            background-color: #1D54A6; color: white; padding: 30px 20px; border-bottom: 12px solid #111;
+            display: flex; justify-content: space-between; align-items: flex-end;
+        }
+        .header h1 { font-size: 2.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin: 0; line-height: 1; }
+        .header .subtitle { font-weight: bold; font-size: 1.2rem; background-color: #FFFFFF; color: #111; padding: 5px 15px; border: 4px solid #111; }
+
+        /* 内容区：非对称卡片布局 */
+        .content { padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+
+        /* 卡片基础样式 */
+        .card { border: 6px solid #111; background-color: #FFFFFF; box-shadow: 8px 8px 0px #111; padding: 20px; position: relative; transition: all 0.2s; }
+        .card:hover { transform: translate(-4px, -4px); box-shadow: 12px 12px 0px #111; cursor: pointer;}
+        
+        /* 星形图标 */
+        .star { font-size: 1.5rem; position: absolute; top: 15px; right: 20px; }
+
+        /* 内容样式 */
+        .card h2 { font-size: 1.4rem; margin-bottom: 10px; margin-right: 30px;}
+        .card p { color: #444; font-size: 1rem; line-height: 1.4; }
+
+        /* 卡片类型变体 */
+        .card-red { background-color: #E32636; color: white; }
+        .card-red p { color: rgba(255,255,255,0.8); }
+        .card-yellow { background-color: #F8D030; color: #111; }
+
+        /* 底部状态栏 */
+        .bottom-nav { position: fixed; bottom: 0; width: 100%; background-color: #111; color: #FFF; padding: 10px 20px; font-weight: bold; display: flex; justify-content: space-between; z-index: 100;}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Favorites</h1>
+        <div class="subtitle">TOTAL: 15 ITEMS</div>
+    </header>
+
+    <main class="content">
+        <div class="card">
+            <span class="star">★</span>
+            <h2>ORR 机理计算文献汇总</h2>
+            <p>包含 Nørskov 课题组的多篇单原子催化机理文章及 d-band center 理论修正数据。</p>
+        </div>
+        
+        <div class="card card-red">
+            <span class="star">★</span>
+            <h2>Bi 纳米棒结构旋转脚本</h2>
+            <p>Manim 代码片段。用于生成 Manim 动画中的弦振动演示或原子结构旋转序列。</p>
+        </div>
+
+        <div class="card card-yellow">
+            <span class="star">★</span>
+            <h2>YOLO 铝材缺陷 SOP</h2>
+            <p>工业缺陷识别数据集建立标准：光照、分辨率、缺陷类别判定依据。</p>
+        </div>
+    </main>
+    
+    <footer class="bottom-nav">
+        <span>STIJL LABS AGENT</span>
+        <span>SYSTEM ONLINE</span>
+    </footer>
+</body>
+</html>

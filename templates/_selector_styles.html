@@ -1,165 +1,119 @@
 <style>
 /* ============================================================
-   _selector_styles.html — 实验选择卡片 & 子对话框 CSS
-   用于 select_experiments 工具渲染，内嵌在消息流中
+   _selector_styles.html — De Stijl selector card styles
    ============================================================ */
 
-/* -- 卡片整体 -- */
 .sel-card {
-  border: 1px solid #e0e0e0; border-radius: 10px;
-  overflow: hidden; background: #fff;
-  margin: 0.5rem 0;
+  border: 3px solid var(--black); overflow: hidden; background: var(--white); margin: 0.5rem 0;
 }
 .sel-card[data-status="cancelled"],
-.sel-card[data-status="expired"] {
-  opacity: 0.7; pointer-events: none;
-}
+.sel-card[data-status="expired"] { opacity: 0.7; pointer-events: none; }
 
-/* -- 顶部栏 -- */
 .sel-topbar {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 0.6rem 1rem; background: #f8f8f8;
-  border-bottom: 1px solid #e8e8e8;
-  font-weight: 600; font-size: 0.9rem;
+  padding: 0.5rem 0.8rem; background: var(--off-white);
+  border-bottom: 2px solid var(--black); font-weight: 700; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 1px;
 }
-.sel-topbar button {
-  font-size: 0.75rem; padding: 0.2rem 0.6rem;
-  border-radius: 6px; border: 1px solid #ccc; background: #fff; cursor: pointer;
-}
-.sel-topbar button:hover { background: #eee; }
+.sel-topbar button { font-size: 0.7rem; padding: 0.2rem 0.5rem; border: 2px solid var(--black); background: var(--white); cursor: pointer; font-weight: 700; }
+.sel-topbar button:hover { background: var(--black); color: var(--white); }
 
-/* -- 实验列表 -- */
 .sel-body { max-height: 360px; overflow-y: auto; }
 .sel-item {
   display: flex; align-items: flex-start; gap: 0.5rem;
-  padding: 0.5rem 1rem; border-bottom: 1px solid #f0f0f0;
-  cursor: pointer; user-select: none; transition: background 0.1s;
+  padding: 0.45rem 0.8rem; border-bottom: 1px solid var(--black);
+  cursor: pointer; user-select: none;
 }
-.sel-item:hover { background: #f5f7ff; }
+.sel-item:hover { background: var(--off-white); }
 .sel-item:last-child { border-bottom: none; }
 
-/* -- 勾选框 -- */
 .sel-item .sel-check {
-  width: 18px; height: 18px; margin-top: 2px;
-  border: 2px solid #bbb; border-radius: 4px; flex-shrink: 0;
+  width: 20px; height: 20px; margin-top: 2px;
+  border: 2px solid var(--black); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; color: transparent; transition: all 0.15s;
+  font-size: 12px; font-weight: 700; color: transparent;
 }
-.sel-item .sel-check.checked {
-  background: #2563eb; border-color: #2563eb; color: #fff;
-}
+.sel-item .sel-check.checked { background: var(--black); color: var(--white); }
 
-/* -- 实验信息 -- */
 .sel-info { flex: 1; min-width: 0; }
-.sel-info .si-id {
-  font-weight: 600; font-family: monospace; font-size: 0.82rem; color: #2563eb;
-}
-.sel-info .si-title {
-  font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  margin: 0.1rem 0;
-}
-.sel-info .si-meta { font-size: 0.75rem; color: #888; }
+.sel-info .si-id { font-weight: 700; font-family: 'Courier New', monospace; font-size: 0.8rem; }
+.sel-info .si-title { font-size: 0.82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0.1rem 0; }
+.sel-info .si-meta { font-size: 0.72rem; opacity: 0.5; font-weight: 600; }
 
-/* -- "查看更多"按钮 -- */
 .sel-more {
-  display: block; width: 100%; padding: 0.5rem;
-  text-align: center; font-size: 0.8rem; color: #2563eb;
-  background: #f5f7ff; border: none; cursor: pointer;
+  display: block; width: 100%; padding: 0.5rem; text-align: center;
+  font-size: 0.78rem; font-weight: 700;
+  background: var(--off-white); border: none; border-top: 2px solid var(--black); cursor: pointer;
+  text-transform: uppercase; letter-spacing: 1px;
 }
-.sel-more:hover { background: #e8ecff; }
+.sel-more:hover { background: var(--black); color: var(--white); }
 
-/* -- 确认/取消后的状态文本 -- */
-.sel-status-text {
-  padding: 0.75rem 1rem; font-size: 0.85rem; color: #555;
-}
-.sel-status-text.confirmed { color: #16a34a; }
-.sel-status-text.cancelled { color: #888; }
-.sel-status-text.expired-warn {
-  color: #d97706; font-size: 0.8rem; padding: 0.4rem 1rem 0;
-}
+.sel-status-text { padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 700; }
+.sel-status-text.confirmed { background: var(--off-white); }
+.sel-status-text.cancelled { opacity: 0.5; }
 
-/* -- 子对话框 modal -- */
 .sel-modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
 }
 .sel-modal {
   width: 90vw; max-width: 520px; max-height: 80vh;
-  background: #fff; border-radius: 12px; overflow: hidden;
-  display: flex; flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  background: var(--white); border: 4px solid var(--black); overflow: hidden;
+  display: flex; flex-direction: column; box-shadow: 10px 10px 0px #111;
 }
-.sel-modal-search {
-  padding: 0.6rem 1rem; border-bottom: 1px solid #e8e8e8;
-}
+.sel-modal-search { padding: 0.6rem 0.8rem; border-bottom: 2px solid var(--black); }
 .sel-modal-search input {
   width: 100%; padding: 0.4rem 0.6rem; font-size: 0.85rem;
-  border: 1px solid #ddd; border-radius: 6px; outline: none;
+  border: 3px solid var(--black); outline: none; font-family: inherit;
 }
-.sel-modal-search input:focus { border-color: #2563eb; }
+.sel-modal-search input:focus { border-color: var(--blue); }
 .sel-modal-list { flex: 1; overflow-y: auto; }
 .sel-modal-bottombar {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 0.6rem 1rem; border-top: 1px solid #e8e8e8; background: #fafafa;
+  padding: 0.6rem 0.8rem; border-top: 2px solid var(--black); background: var(--off-white);
 }
-.sel-modal-bottombar .sel-count { font-size: 0.8rem; color: #666; }
+.sel-modal-bottombar .sel-count { font-size: 0.8rem; font-weight: 700; }
 .sel-modal-bottombar .sel-actions { display: flex; gap: 0.5rem; }
 .sel-modal-bottombar button {
-  font-size: 0.8rem; padding: 0.3rem 0.8rem; border-radius: 6px;
-  cursor: pointer; border: 1px solid #ccc; background: #fff;
+  font-size: 0.75rem; padding: 0.3rem 0.7rem; cursor: pointer;
+  border: 2px solid var(--black); font-weight: 700; text-transform: uppercase;
 }
-.sel-modal-bottombar button.sel-btn-cancel:hover { background: #f0f0f0; }
-.sel-modal-bottombar button.sel-btn-confirm {
-  background: #2563eb; color: #fff; border-color: #2563eb;
-}
-.sel-modal-bottombar button.sel-btn-confirm:hover { background: #1d4ed8; }
+.sel-modal-bottombar button.sel-btn-cancel { background: var(--white); }
+.sel-modal-bottombar button.sel-btn-cancel:hover { background: var(--off-white); }
+.sel-modal-bottombar button.sel-btn-confirm { background: var(--black); color: var(--white); }
+.sel-modal-bottombar button.sel-btn-confirm:hover { background: var(--white); color: var(--black); }
 
-/* -- 底部栏 -- */
 .sel-bottombar {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 0.6rem 1rem; border-top: 1px solid #e8e8e8; background: #fafafa;
+  padding: 0.5rem 0.8rem; border-top: 2px solid var(--black); background: var(--off-white);
 }
-.sel-bottombar .sel-count { font-size: 0.8rem; color: #666; }
+.sel-bottombar .sel-count { font-size: 0.78rem; font-weight: 700; }
 .sel-bottombar .sel-actions { display: flex; gap: 0.5rem; }
 .sel-bottombar button {
-  font-size: 0.8rem; padding: 0.3rem 0.8rem; border-radius: 6px;
-  cursor: pointer; border: 1px solid #ccc; background: #fff;
+  font-size: 0.75rem; padding: 0.3rem 0.7rem; cursor: pointer;
+  border: 2px solid var(--black); font-weight: 700; text-transform: uppercase;
 }
-.sel-bottombar button.sel-btn-cancel:hover { background: #f0f0f0; }
-.sel-bottombar button.sel-btn-confirm {
-  background: #2563eb; color: #fff; border-color: #2563eb;
-}
-.sel-bottombar button.sel-btn-confirm:hover { background: #1d4ed8; }
+.sel-bottombar button.sel-btn-cancel { background: var(--white); }
+.sel-bottombar button.sel-btn-cancel:hover { background: var(--off-white); }
+.sel-bottombar button.sel-btn-confirm { background: var(--black); color: var(--white); }
+.sel-bottombar button.sel-btn-confirm:hover { background: var(--white); color: var(--black); }
 
-/* -- 分析结果摘要卡片 -- */
 .analysis-summary-card {
-  border: 1px solid #d0d7e2; border-radius: 8px;
-  padding: 0.75rem 1rem; margin: 0.5rem 0;
-  background: #f8faff;
+  border: 3px solid var(--black); padding: 0.75rem 1rem; margin: 0.5rem 0; background: var(--off-white);
 }
-.analysis-summary-card .asc-title {
-  font-weight: 600; font-size: 0.9rem; margin-bottom: 0.3rem;
-}
+.analysis-summary-card .asc-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 0.3rem; text-transform: uppercase; }
 .analysis-summary-card .asc-excerpt {
-  font-size: 0.82rem; color: #555; margin-bottom: 0.5rem;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: 0.8rem; opacity: 0.7; margin-bottom: 0.5rem;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.analysis-summary-card .asc-link {
-  font-size: 0.8rem; color: #2563eb; text-decoration: none;
-}
-.analysis-summary-card .asc-link:hover { text-decoration: underline; }
+.analysis-summary-card .asc-link { font-size: 0.75rem; font-weight: 700; color: var(--black); text-decoration: none; text-transform: uppercase; }
 
-/* -- 移动端适配 -- */
 @media (max-width: 480px) {
   .sel-item { padding: 0.4rem 0.6rem; gap: 0.3rem; }
-  .sel-item .sel-check { width: 16px; height: 16px; }
-  .sel-info .si-id { font-size: 0.75rem; }
-  .sel-info .si-title { font-size: 0.78rem; }
-  .sel-info .si-meta { font-size: 0.7rem; }
+  .sel-item .sel-check { width: 18px; height: 18px; }
+  .sel-info .si-id { font-size: 0.72rem; }
+  .sel-info .si-title { font-size: 0.76rem; }
+  .sel-info .si-meta { font-size: 0.68rem; }
   .sel-topbar, .sel-bottombar { padding: 0.4rem 0.6rem; }
-  .sel-topbar { font-size: 0.8rem; }
   .sel-modal { width: 95vw; max-height: 90vh; }
 }
 </style>

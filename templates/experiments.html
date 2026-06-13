@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block title %}实验列表{% endblock %}
+{% block page_id %}experiments{% endblock %}
+{% block page_bg %}background-color: #fdf2f2;{% endblock %}
+{% block topbar_style %}
+.topbar { background: var(--red); }
+.topbar-back { background: var(--white); color: var(--red); border-color: var(--white); }
+.topbar-back:hover { background: var(--red); color: var(--white); }
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap;gap:0.5rem">
+  <div>
+    <h1 style="margin:0;border-bottom:none;padding-bottom:0">Experiment List</h1>
+    <span style="font-size:0.8rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;opacity:0.5">Total: {{ experiments|length }} Records</span>
+  </div>
+  <div style="display:flex;gap:0.5rem;align-items:center">
+    <button type="button" id="btn-compare-mode" class="outline" style="font-size:0.75rem;padding:0.3rem 0.7rem" onclick="toggleCompareMode()">Compare</button>
+    <a href="/new" role="button">+ New</a>
+  </div>
+</div>
+
+{# Compare bar #}
+<div id="compare-bar" style="display:none;border:4px solid var(--black);padding:0.6rem 1rem;margin-bottom:1rem;display:none;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;background:var(--yellow)">
+  <span id="compare-count" style="font-size:0.8rem;font-weight:700">Select 2-4 experiments</span>
+  <button type="button" id="btn-compare-go" style="font-size:0.8rem;padding:0.3rem 0.8rem" disabled onclick="goCompare()">Compare</button>
+</div>
+
+{# Search panel #}
+<div class="search-panel" style="margin-bottom:1.5rem">
+  <input type="search" id="search-input" placeholder="Search experiments..." autocomplete="off" style="margin-bottom:0.5rem">
+
+  <div id="status-filters" style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.3rem">
+    <span class="filter-chip active" data-status="">All</span>
+    <span class="filter-chip" data-status="done">Done</span>
+    <span class="filter-chip" data-status="planned">Planned</span>
+    <span class="filter-chip" data-status="running">Running</span>
+    <span class="filter-chip" data-status="failed">Failed</span>
+    <span class="filter-chip" data-status="repeated">Repeated</span>
+  </div>
+
+  <details id="advanced-filters" style="margin-top:0.3rem">
+    <summary style="font-weight:700;font-size:0.78rem;cursor:pointer;text-transform:uppercase;letter-spacing:1px;opacity:0.6">Advanced Filters</summary>
+    <div class="filter-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:0.5rem;padding:0.75rem;border:3px solid var(--black);background:var(--off-white)">
+      <div>
+        <label style="font-size:0.75rem;font-weight:700;text-transform:uppercase">Tags</label>
+        <div id="tag-filters" style="display:flex;flex-wrap:wrap;gap:0.2rem"></div>
+      </div>
+      <div>
+        <label style="font-size:0.75rem;font-weight:700;text-transform:uppercase">Date Range</label>
+        <div style="display:flex;gap:0.3rem;align-items:center;flex-wrap:wrap">
+          <input type="date" id="date-from" style="width:auto;font-size:0.8rem">
+          <span style="font-weight:700">~</span>
+          <input type="date" id="date-to" style="width:auto;font-size:0.8rem">
+        </div>
+      </div>
+    </div>
+  </details>
+</div>
+
+{# Experiment cards #}
+<div id="experiment-list">
+{% if experiments %}
+  {% for exp in experiments %}
+  {% set is_pinned = exp.id in pinned_ids %}
+  <article class="experiment-card{% if is_pinned %} pinned-card{% endif %}"
+           data-exp-id="{{ exp.id }}"
+           data-status="{{ exp.status }}"
+           data-title="{{ exp.title or '' }}"
+           onclick="if(_compareMode){toggleCompareCheck(this);}else{navigateToPage('/experiments/{{ exp.id }}')}">
+
+    <input type="checkbox" class="compare-checkbox" style="display:none;margin-right:0.4rem;width:auto;cursor:pointer;flex-shrink:0" onclick="event.stopPropagation();toggleCompareCheck(this.closest('article'))">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem">
+      <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+        <span style="font-size:0.72rem;font-weight:600;color:#999">{{ exp.id }}</span>
+        {% if is_pinned %}<span style="font-weight:700;font-size:0.65rem">PINNED</span>{% endif %}
+        {% if exp.status %}
+        <span class="status-badge status-{{ exp.status }}" style="font-size:0.65em;padding:0.1em 0.4em">{{ exp.status }}</span>
+        {% endif %}
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <small style="font-weight:700;font-size:0.75rem;opacity:0.5;letter-spacing:1px">{{ exp.date }}</small>
+        <span style="position:relative;display:inline-flex">
+          <span class="card-menu-btn" onclick="event.stopPropagation();toggleCardMenu(this)" title="More">&#x22ee;</span>
+          <div class="card-menu-dropdown" style="display:none">
+            <div class="card-menu-item pin-item" data-exp-id="{{ exp.id }}" onclick="event.stopPropagation();togglePin('{{ exp.id }}', this)">
+              {% if is_pinned %}Unpin{% else %}Pin{% endif %}
+            </div>
+            <div class="card-menu-item fav-item" data-exp-id="{{ exp.id }}" onclick="event.stopPropagation();showFavModal('{{ exp.id }}')">Favorite</div>
+          </div>
+        </span>
+      </div>
+    </div>
+
+    <p class="card-title" style="margin:0.5rem 0 0.3rem 0;font-weight:700;font-size:1.05rem">{{ exp.title or '(untitled)' }}</p>
+
+    {% if exp.tags %}
+    <div class="card-tags" style="margin-top:0.3rem">
+      {% for tag in exp.tags %}
+      <span class="tag-pill">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+{% else %}
+<div class="empty-state" id="empty-initial">
+  <h3>No Experiments Yet</h3>
+  <p>Click "+ New" to create your first record</p>
+</div>
+{% endif %}
+</div>
+
+<div id="no-results" class="empty-state" style="display:none">
+  <h3>No Matching Experiments</h3>
+  <p>Try adjusting your search or filters</p>
+</div>
+
+<style>
+
+.card-menu-btn {
+  cursor: pointer; font-size: 1.1rem; opacity: 0.5;
+  padding: 0 4px; line-height: 1; user-select: none;
+}
+.card-menu-btn:hover { opacity: 1; }
+
+.card-menu-dropdown {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 200;
+  background: var(--white); border: 4px solid var(--black);
+  box-shadow: 6px 6px 0px #111;
+  min-width: 130px; padding: 0.3rem 0;
+}
+.card-menu-item {
+  padding: 0.4rem 0.9rem; font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.card-menu-item:hover { background: var(--black); color: var(--white); }
+
+.compare-checkbox { accent-color: var(--red); }
+</style>
+
+<script>
+// ---- Card menu ----
+function toggleCardMenu(btn) {
+  var dropdown = btn.nextElementSibling;
+  document.querySelectorAll('.card-menu-dropdown').forEach(function(d) {
+    if (d !== dropdown) d.style.display = 'none';
+  });
+  dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.card-menu-btn')) {
+    document.querySelectorAll('.card-menu-dropdown').forEach(function(d) { d.style.display = 'none'; });
+  }
+});
+
+// ---- Pin ----
+function togglePin(expId, el) {
+  fetch('/api/experiments/' + expId + '/pin', {method:'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(r) { if (r.ok) location.reload(); else alert(r.error || 'Failed'); });
+}
+
+// ---- Favorite modal ----
+function showFavModal(expId) {
+  document.querySelectorAll('.card-menu-dropdown').forEach(function(d) { d.style.display = 'none'; });
+  fetch('/api/list-collections')
+    .then(function(r) { return r.json(); })
+    .then(function(collections) {
+      var names = Object.keys(collections || {'Default': []});
+      var html = '<div style="margin-bottom:0.8rem;font-weight:700;font-size:0.85rem;text-transform:uppercase">Select Collection</div>';
+      names.forEach(function(name) {
+        html += '<label style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;cursor:pointer;font-size:0.9rem;font-weight:600">';
+        html += '<input type="radio" name="fav-collection" value="' + escHtml(name) + '"' + (name === 'Default' ? ' checked' : '') + '>';
+        html += escHtml(name) + ' <small style="opacity:0.5">(' + (collections[name] || []).length + ')</small>';
+        html += '</label>';
+      });
+      html += '<hr style="border:2px solid var(--black);margin:0.5rem 0">';
+      html += '<div style="display:flex;gap:0.3rem;margin-bottom:0.5rem">';
+      html += '<input type="text" id="new-collection-name" placeholder="New collection name" style="flex:1;font-size:0.85rem">';
+      html += '<button class="outline" style="font-size:0.7rem;padding:0.2rem 0.5rem" onclick="createAndFav(\'' + expId + '\')">+New</button>';
+      html += '</div>';
+      html += '<div class="edit-modal-actions">';
+      html += '<button class="outline secondary" onclick="closeFavModal()">Cancel</button>';
+      html += '<button onclick="confirmFav(\'' + expId + '\')">Confirm</button>';
+      html += '</div>';
+      document.getElementById('fav-modal-content').innerHTML = html;
+      document.getElementById('fav-modal').classList.add('active');
+    });
+}
+
+function closeFavModal() { document.getElementById('fav-modal').classList.remove('active'); }
+
+function createAndFav(expId) {
+  var inp = document.getElementById('new-collection-name');
+  if (!inp || !inp.value.trim()) return;
+  fetch('/api/collections', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: inp.value.trim()})
+  }).then(function(r) { return r.json(); })
+    .then(function(r) { if (r.ok) { inp.value = ''; showFavModal(expId); } else alert(r.error || 'Failed'); });
+}
+
+function confirmFav(expId) {
+  var checked = document.querySelector('input[name="fav-collection"]:checked');
+  var collection = checked ? checked.value : 'Default';
+  fetch('/api/experiments/' + expId + '/favorite', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({collection: collection})
+  }).then(function(r) { return r.json(); })
+    .then(function(r) { if (r.ok) closeFavModal(); else alert(r.error || 'Failed'); });
+}
+
+// ---- Search & filter ----
+var _allExperiments = [];
+var _allTags = [];
+
+fetch('/api/experiments/search')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    _allExperiments = data;
+    var tagSet = {};
+    data.forEach(function(exp) { (exp.tags || []).forEach(function(t) { tagSet[t] = true; }); });
+    _allTags = Object.keys(tagSet).sort();
+    populateTagFilters();
+  });
+
+function populateTagFilters() {
+  var container = document.getElementById('tag-filters');
+  if (!container) return;
+  container.innerHTML = '';
+  _allTags.forEach(function(tag) {
+    var chip = document.createElement('span');
+    chip.className = 'filter-chip'; chip.textContent = tag; chip.dataset.tag = tag;
+    chip.addEventListener('click', function() { this.classList.toggle('active'); filterExperiments(); });
+    container.appendChild(chip);
+  });
+}
+
+function getActiveTags() {
+  var tags = [];
+  document.querySelectorAll('#tag-filters .filter-chip.active').forEach(function(c) { tags.push(c.dataset.tag.toLowerCase()); });
+  return tags;
+}
+
+function filterExperiments() {
+  var query = document.getElementById('search-input').value.trim().toLowerCase();
+  var activeChip = document.querySelector('#status-filters .filter-chip.active');
+  var statusFilter = activeChip ? activeChip.dataset.status : '';
+  var activeTags = getActiveTags();
+  var dateFrom = document.getElementById('date-from').value;
+  var dateTo = document.getElementById('date-to').value;
+
+  var anyVisible = false;
+  document.querySelectorAll('#experiment-list .experiment-card').forEach(function(card) {
+    var expId = card.dataset.expId;
+    var exp = null;
+    for (var i = 0; i < _allExperiments.length; i++) {
+      if (_allExperiments[i].id === expId) { exp = _allExperiments[i]; break; }
+    }
+    if (!exp) { card.style.display = ''; return; }
+
+    var visible = true;
+
+    if (query && visible) {
+      var searchable = [
+        exp.title, exp.purpose, exp.conclusion,
+        (exp.sop || []).join(' '),
+        (exp.materials || []).map(function(m) { return m.name || ''; }).join(' '),
+        ((exp.observations || {}).items || []).join(' '),
+        (exp.tags || []).join(' '),
+        exp.experimenter || ''
+      ].join(' ').toLowerCase();
+      visible = searchable.indexOf(query) !== -1;
+    }
+
+    if (statusFilter && visible) { visible = exp.status === statusFilter; }
+
+    if (activeTags.length > 0 && visible) {
+      var expTags = (exp.tags || []).map(function(t) { return t.toLowerCase(); });
+      visible = activeTags.some(function(t) { return expTags.indexOf(t) !== -1; });
+    }
+
+    if (dateFrom && visible) { visible = exp.date && exp.date >= dateFrom; }
+    if (dateTo && visible) { visible = exp.date && exp.date <= dateTo; }
+
+    card.style.display = visible ? '' : 'none';
+    if (visible) anyVisible = true;
+
+    var titleEl = card.querySelector('.card-title');
+    if (titleEl) {
+      if (visible && query) { highlightElement(titleEl, query); }
+      else { restoreElement(titleEl); }
+    }
+  });
+
+  var emptyInit = document.getElementById('empty-initial');
+  var noResults = document.getElementById('no-results');
+  if (emptyInit) emptyInit.style.display = 'none';
+  if (document.querySelectorAll('#experiment-list .experiment-card').length === 0) {
+    // Jinja2 empty state
+  } else {
+    noResults.style.display = anyVisible ? 'none' : '';
+  }
+}
+
+function highlightElement(el, query) {
+  if (el.dataset.originalText === undefined) el.dataset.originalText = el.textContent;
+  var original = el.dataset.originalText;
+  var idx = original.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) { el.textContent = original; return; }
+  el.innerHTML = escHtml(original.substring(0, idx)) + '<mark class="highlight">' + escHtml(original.substring(idx, idx + query.length)) + '</mark>' + escHtml(original.substring(idx + query.length));
+}
+
+function restoreElement(el) {
+  if (el.dataset.originalText !== undefined) { el.textContent = el.dataset.originalText; delete el.dataset.originalText; }
+}
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+document.getElementById('search-input').addEventListener('input', filterExperiments);
+document.querySelectorAll('#status-filters .filter-chip').forEach(function(chip) {
+  chip.addEventListener('click', function() {
+    var parent = this.parentElement;
+    parent.querySelectorAll('.filter-chip').forEach(function(c) { c.classList.remove('active'); });
+    if (this.dataset.status) this.classList.add('active');
+    filterExperiments();
+  });
+});
+document.getElementById('date-from').addEventListener('change', filterExperiments);
+document.getElementById('date-to').addEventListener('change', filterExperiments);
+
+// ---- Compare mode ----
+var _compareMode = false;
+var _compareSelected = [];
+
+window.savePageState = function() { return {scrollY: window.scrollY}; };
+window.restorePageState = function(state) { if (state && state.scrollY !== undefined) window.scrollTo(0, state.scrollY); };
+
+function toggleCompareMode() {
+  _compareMode = !_compareMode;
+  _compareSelected = [];
+  var btn = document.getElementById('btn-compare-mode');
+  var bar = document.getElementById('compare-bar');
+  if (_compareMode) {
+    btn.textContent = 'Exit Compare'; btn.style.background = 'var(--black)'; btn.style.color = 'var(--white)';
+    bar.style.display = 'flex';
+  } else {
+    btn.textContent = 'Compare'; btn.style.background = ''; btn.style.color = '';
+    bar.style.display = 'none';
+  }
+  document.querySelectorAll('.experiment-card').forEach(function(card) {
+    var cb = card.querySelector('.compare-checkbox');
+    if (cb) { cb.style.display = _compareMode ? '' : 'none'; cb.checked = false; }
+    card.classList.remove('status-selected');
+  });
+  document.getElementById('compare-count').textContent = 'Select 2-4 experiments';
+  document.getElementById('btn-compare-go').disabled = true;
+}
+
+function toggleCompareCheck(card) {
+  if (!_compareMode) return;
+  var expId = card.dataset.expId; if (!expId) return;
+  var cb = card.querySelector('.compare-checkbox'); if (!cb) return;
+  var idx = _compareSelected.indexOf(expId);
+  if (idx >= 0) { _compareSelected.splice(idx, 1); cb.checked = false; card.classList.remove('status-selected'); }
+  else {
+    if (_compareSelected.length >= 4) { alert('Max 4 experiments'); return; }
+    _compareSelected.push(expId); cb.checked = true; card.classList.add('status-selected');
+  }
+  updateCompareBar();
+}
+
+function updateCompareBar() {
+  var n = _compareSelected.length;
+  document.getElementById('compare-count').textContent = n < 2 ? 'Selected ' + n + ' (need 2-4)' : 'Selected ' + n + ' experiments';
+  document.getElementById('btn-compare-go').disabled = n < 2;
+}
+
+function goCompare() {
+  if (_compareSelected.length < 2) return;
+  navigateToPage('/compare?ids=' + _compareSelected.join(','));
+}
+</script>
+
+{# Favorite modal #}
+<div class="edit-modal-overlay" id="fav-modal">
+  <div class="edit-modal-box" style="max-width:400px">
+    <div id="fav-modal-content"></div>
+  </div>
+</div>
+<script>
+document.getElementById('fav-modal').addEventListener('click', function(e) { if (e.target === this) closeFavModal(); });
+</script>
+
+{% endblock %}

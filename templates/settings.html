@@ -3,65 +3,64 @@
 {% block page_id %}settings{% endblock %}
 {% block content %}
 
-<h1>&#x2699; 设置</h1>
-<p style="color:var(--pico-muted-color)">配置 DeepSeek API 和服务参数。</p>
+<h1 style="border-bottom:none;padding-bottom:0">Settings</h1>
+<p style="font-weight:700;font-size:0.8rem;opacity:0.5;letter-spacing:1px;text-transform:uppercase">Configure DeepSeek API &amp; Server</p>
 
 {% if success %}
-<div class="flash flash-success">{{ success }}</div>
+<div class="flash flash-success" style="border-left:8px solid var(--black)">{{ success }}</div>
 {% endif %}
 {% if error %}
-<div class="flash flash-error">{{ error }}</div>
+<div class="flash flash-error" style="border-left:8px solid var(--black)">{{ error }}</div>
 {% endif %}
 
-<form method="post" action="/settings">
+<form method="post" action="/settings" style="margin-top:1.5rem">
 
-  <label for="api_key">
+  <label style="margin-top:1rem">
     <strong>DeepSeek API Key</strong>
-    <small>从 <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a> 获取</small>
+    <small style="font-weight:500;opacity:0.6">From platform.deepseek.com</small>
   </label>
   <input type="password" id="api_key" name="DEEPSEEK_API_KEY"
     placeholder="{% if masked_key %}{{ masked_key }}{% else %}sk-...{% endif %}"
     value="{{ config.DEEPSEEK_API_KEY if not masked_key else '' }}"
     style="font-family:monospace">
 
-  <label for="extract_model">
-    <strong>提取模型（结构化提取）</strong>
-    <small>需支持 function calling，推荐 deepseek-v4-flash</small>
+  <label style="margin-top:1rem">
+    <strong>Extract Model</strong>
+    <small style="font-weight:500;opacity:0.6">Needs function calling support. Recommended: deepseek-v4-flash</small>
   </label>
   <input type="text" id="extract_model" name="DEEPSEEK_MODEL"
     value="{{ config.DEEPSEEK_MODEL or 'deepseek-v4-flash' }}">
 
-  <label for="analyze_model">
-    <strong>分析模型（跨实验分析）</strong>
-    <small>推荐推理增强模型，如 deepseek-v4-pro</small>
+  <label style="margin-top:1rem">
+    <strong>Analyze Model</strong>
+    <small style="font-weight:500;opacity:0.6">Recommended: deepseek-v4-pro (reasoning enhanced)</small>
   </label>
   <input type="text" id="analyze_model" name="DEEPSEEK_ANALYZE_MODEL"
     value="{{ config.DEEPSEEK_ANALYZE_MODEL or 'deepseek-v4-pro' }}">
 
-  <hr>
+  <hr style="border:3px solid var(--black);margin:1.5rem 0">
 
   <div style="display:flex;gap:1rem;flex-wrap:wrap">
     <div style="flex:1;min-width:120px">
-      <label for="port"><strong>端口</strong></label>
+      <label><strong>Port</strong></label>
       <input type="number" id="port" name="PORT" value="{{ config.PORT or '5000' }}" min="1024" max="65535">
     </div>
     <div style="flex:2;min-width:180px">
-      <label for="host"><strong>监听地址</strong></label>
+      <label><strong>Host</strong></label>
       <input type="text" id="host" name="HOST" value="{{ config.HOST or '0.0.0.0' }}">
     </div>
   </div>
 
-  <label style="margin-top:0.5rem">
-    <input type="checkbox" name="GUI" value="true" {% if config.GUI and config.GUI != 'false' %}checked{% endif %}>
-    <strong>启动时弹出桌面窗口</strong>
-    <small>（需安装 pywebview；未安装时自动回退到浏览器模式）</small>
+  <label style="margin-top:1rem;display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+    <input type="checkbox" name="GUI" value="true" {% if config.GUI and config.GUI != 'false' %}checked{% endif %} style="width:auto">
+    <span><strong>Launch desktop window on start</strong><br><small style="font-weight:500;opacity:0.6">Requires pywebview. Falls back to browser mode if not installed.</small></span>
   </label>
 
-  <p style="color:var(--pico-muted-color);font-size:0.8rem;margin-top:0.5rem">
-    &#x26a0; 修改端口或监听地址后需手动重启应用才能生效。
+  <p style="font-weight:700;font-size:0.75rem;opacity:0.5;margin-top:0.5rem;letter-spacing:0.5px">
+    Restart required after changing port or host.
   </p>
 
-  <button type="submit" style="min-width:120px">&#x1f4be; 保存设置</button>
+  <button type="submit" style="min-width:140px;margin-top:1rem">Save Settings</button>
 </form>
 
 {% endblock %}

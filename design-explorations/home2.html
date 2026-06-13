@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>De Stijl 风格派海报复刻 - 永久锁定字边排版</title>
+    <style>
+        :root {
+            --red: #D20E1C;
+            --blue: #1A3E92;
+            --yellow: #F6CE24;
+            --black: #000000;
+            --white: #FFFFFF;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            font-family: sans-serif;
+        }
+
+        /* 严格保留的海报主体结构 */
+        .poster {
+            width: 320px;
+            height: 500px;
+            background-color: var(--black);
+            border: 3px solid var(--black); 
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .line, .terminal-line, .cut-line { display: none; }
+
+        /* === 文本和标签 (严格保留原样) === */
+        .text-layer {
+            position: absolute; width: 100%; height: 100%; z-index: 10;
+            pointer-events: none;
+        }
+
+        .main-title-container {
+            position: absolute;
+            left: 52.5%; 
+            top: 37.5%;  
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+        }
+
+        .main-title {
+            font-size: 2.8rem;
+            font-weight: 900;
+            color: var(--black);
+            letter-spacing: -2px;
+            text-transform: uppercase;
+            margin: 0; padding: 0;
+            font-family: sans-serif;
+            background-color: var(--white);
+            padding: 0 5px;
+        }
+
+        .label {
+            position: absolute; font-size: 0.65rem; color: var(--black);
+            font-weight: 300; font-family: sans-serif; text-transform: uppercase;
+            background-color: var(--white);
+            padding: 2px 4px;
+        }
+
+        .label-top { top: 18%; left: 32%; }
+        .label-bottom-left { bottom: 15%; left: 3%; }
+        .label-bottom-right { bottom: 12%; right: 4%; }
+
+        /* Canvas 层级置于底层 */
+        #de-stijl-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            cursor: pointer; 
+        }
+
+        /* 模拟跳转后的页面悬浮层 */
+        #mock-page {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #mock-page h2 {
+            font-size: 1.8rem;
+            margin-bottom: 30px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #mock-page button {
+            padding: 10px 25px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            border: 2px solid var(--black);
+            background: var(--white);
+            color: var(--black);
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+
+        #mock-page button:hover {
+            background: var(--black);
+            color: var(--white);
+        }
+    </style>
+</head>
+<body>
+    <div class="poster">
+        <canvas id="de-stijl-canvas" width="320" height="500"></canvas>
+
+        <div class="text-layer">
+            <div class="main-title-container">
+                <h1 class="main-title">DE STIJL</h1>
+            </div>
+            <div class="label label-top">ABSTRACTED FORMS</div>
+            <div class="label label-bottom-left">SQUARED TERMINALS</div>
+            <div class="label label-bottom-right">PLANES OF PRIMARY COLOR</div>
+        </div>
+
+        <div id="mock-page">
+            <h2 id="mock-page-title">页面标题</h2>
+            <button onclick="resetTransition()">返回主页</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('de-stijl-canvas');
+        const ctx = canvas.getContext('2d');
+
+        const CHUNK_SIZE = 400;
+        const ZOOM = 1.5; 
+
+        let camera = { x: 0, y: 0 };
+        let time = Math.random() * Math.PI * 2; 
+        const activeChunks = new Map();
+
+        // 确定前瞻边缘的方向控制变量
+        let currentSpeedX = 0;
+        let currentSpeedY = 0;
+
+        let transitionState = {
+            active: false,
+            progress: 0,
+            navigated: false,
+            startX: 0, startY: 0, startW: 0, startH: 0,
+            color: '', label: ''
+        };
+
+        window.resetTransition = function() {
+            document.getElementById('mock-page').style.display = 'none';
+            transitionState.active = false;
+        };
+
+        function pseudoRandom(seed) {
+            let x = Math.sin(seed++) * 10000;
+            return x - Math.floor(x);
+        }
+
+        function areAdjacent(r1, r2) {
+            const epsilon = 0.5;
+            const touchLeft = Math.abs(r1.x - (r2.x + r2.w)) < epsilon;
+            const touchRight = Math.abs((r1.x + r1.w) - r2.x) < epsilon;
+            const touchTop = Math.abs(r1.y - (r2.y + r2.h)) < epsilon;
+            const touchBottom = Math.abs((r1.y + r1.h) - r2.y) < epsilon;
+
+            const overlapX = r1.x < r2.x + r2.w - epsilon && r1.x + r1.w > r2.x + epsilon;
+            const overlapY = r1.y < r2.y + r2.h - epsilon && r1.y + r1.h > r2.y + epsilon;
+
+            return ((touchLeft || touchRight) && overlapY) || ((touchTop || touchBottom) && overlapX);
+        }
+
+        function getColorByArea(area, seed, forbiddenColors) {
+            const chunkArea = CHUNK_SIZE * CHUNK_SIZE;
+            const ratio = area / chunkArea;
+
+            let weights = { '#FFFFFF': 0, '#D20E1C': 0, '#1A3E92': 0, '#F6CE24': 0 };
+
+            if (ratio > 0.18) {
+                weights['#FFFFFF'] = 65; weights['#D20E1C'] = 25; weights['#1A3E92'] = 8; weights['#F6CE24'] = 2;
+            } else if (ratio > 0.05) {
+                weights['#FFFFFF'] = 15; weights['#D20E1C'] = 30; weights['#1A3E92'] = 40; weights['#F6CE24'] = 15;
+            } else {
+                weights['#FFFFFF'] = 2; weights['#D20E1C'] = 15; weights['#1A3E92'] = 38; weights['#F6CE24'] = 45;
+            }
+
+            forbiddenColors.forEach(c => {
+                if (weights[c] !== undefined) weights[c] = 0;
+            });
+
+            let totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+
+            if (totalWeight <= 0) {
+                const allColors = ['#FFFFFF', '#D20E1C', '#1A3E92', '#F6CE24'];
+                const fallbackColors = allColors.filter(c => !forbiddenColors.includes(c));
+                const pool = fallbackColors.length > 0 ? fallbackColors : allColors;
+                return pool[Math.floor(pseudoRandom(seed) * pool.length)];
+            }
+
+            let r = pseudoRandom(seed) * totalWeight;
+            for (let [color, weight] of Object.entries(weights)) {
+                r -= weight;
+                if (r <= 0) return color;
+            }
+            return '#FFFFFF';
+        }
+
+        function generateChunk(cx, cy, activeChunksMap) {
+            let seed = cx * 73856.093 + cy * 19349.663; 
+            
+            let rects = [{ x: cx * CHUNK_SIZE, y: cy * CHUNK_SIZE, w: CHUNK_SIZE, h: CHUNK_SIZE }];
+            const iterations = 8 + Math.floor(pseudoRandom(seed++) * 6); 
+            
+            for (let i = 0; i < iterations; i++) {
+                rects.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+                
+                let targetIdx = 0;
+                if (rects.length > 1 && pseudoRandom(seed++) > 0.65) {
+                    targetIdx = Math.floor(pseudoRandom(seed++) * rects.length);
+                }
+                
+                const target = rects[targetIdx];
+                const splitHorizontally = target.w > target.h;
+                
+                let min_ratio, max_ratio;
+                if (splitHorizontally) {
+                    min_ratio = Math.max(0.5 * target.h / target.w, 1 - 2 * target.h / target.w);
+                    max_ratio = Math.min(2 * target.h / target.w, 1 - 0.5 * target.h / target.w);
+                } else {
+                    min_ratio = Math.max(0.5 * target.w / target.h, 1 - 2 * target.w / target.h);
+                    max_ratio = Math.min(2 * target.w / target.h, 1 - 0.5 * target.w / target.h);
+                }
+
+                min_ratio = Math.max(0.05, min_ratio);
+                max_ratio = Math.min(0.95, max_ratio);
+
+                let ratio;
+                if (min_ratio <= max_ratio) {
+                    ratio = min_ratio + pseudoRandom(seed++) * (max_ratio - min_ratio);
+                } else {
+                    ratio = 0.5;
+                    seed++;
+                }
+                
+                let r1, r2;
+                const minSize = 20; 
+
+                if (splitHorizontally) {
+                    let w1 = target.w * ratio;
+                    if (w1 < minSize || target.w - w1 < minSize) continue; 
+                    r1 = { x: target.x, y: target.y, w: w1, h: target.h };
+                    r2 = { x: target.x + w1, y: target.y, w: target.w - w1, h: target.h };
+                } else {
+                    let h1 = target.h * ratio;
+                    if (h1 < minSize || target.h - h1 < minSize) continue;
+                    r1 = { x: target.x, y: target.y, w: target.w, h: h1 };
+                    r2 = { x: target.x, y: target.y + h1, w: target.w, h: target.h - h1 };
+                }
+
+                rects.splice(targetIdx, 1);
+                rects.push(r1, r2);
+            }
+
+            let neighborRects = [];
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    if (dx === 0 && dy === 0) continue;
+                    let nKey = getChunkKey(cx + dx, cy + dy);
+                    if (activeChunksMap.has(nKey)) {
+                        neighborRects.push(...activeChunksMap.get(nKey));
+                    }
+                }
+            }
+
+            rects.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+            for (let i = 0; i < rects.length; i++) {
+                const rect = rects[i];
+                let forbiddenColors = [];
+                
+                for (let j = 0; j < i; j++) {
+                    if (areAdjacent(rect, rects[j])) {
+                        forbiddenColors.push(rects[j].color);
+                    }
+                }
+                
+                for (const nRect of neighborRects) {
+                    if (areAdjacent(rect, nRect)) {
+                        forbiddenColors.push(nRect.color);
+                    }
+                }
+                
+                rect.color = getColorByArea(rect.w * rect.h, seed++, forbiddenColors);
+
+                // --- 核心修改：在块初始生成的唯一瞬间，将文字选边计算并永久锁定 ---
+                const candidates = [];
+                if (currentSpeedX > 0) candidates.push(3); // 左边缘
+                else if (currentSpeedX < 0) candidates.push(1); // 右边缘
+                if (currentSpeedY > 0) candidates.push(0); // 上边缘
+                else if (currentSpeedY < 0) candidates.push(2); // 下边缘
+                
+                if (candidates.length === 0) candidates.push(0, 1, 2, 3);
+                
+                // 将锁定的边作为对象属性赋予矩形，脱离后续 render 的速度干扰
+                rect.edge = candidates[Math.floor(pseudoRandom(seed++) * candidates.length)];
+            }
+
+            return rects;
+        }
+
+        function getChunkKey(cx, cy) { return `${cx},${cy}`; }
+
+        canvas.addEventListener('click', (e) => {
+            if (transitionState.active) return; 
+
+            const canvasRect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - canvasRect.left) * (canvas.width / canvasRect.width);
+            const clickY = (e.clientY - canvasRect.top) * (canvas.height / canvasRect.height);
+
+            for (const chunkRects of activeChunks.values()) {
+                for (const r of chunkRects) {
+                    const drawX = r.x - camera.x;
+                    const drawY = r.y - camera.y;
+                    
+                    const expectedThicknessH = 0.5 + r.w * 0.03; 
+                    const expectedThicknessV = 0.5 + r.h * 0.03; 
+                    const insetX = expectedThicknessV / 2;
+                    const insetY = expectedThicknessH / 2;
+
+                    const screenX = (drawX + insetX) * ZOOM;
+                    const screenY = (drawY + insetY) * ZOOM;
+                    const screenW = (r.w - insetX * 2) * ZOOM;
+                    const screenH = (r.h - insetY * 2) * ZOOM;
+
+                    if (clickX >= screenX && clickX <= screenX + screenW && 
+                        clickY >= screenY && clickY <= screenY + screenH) {
+                        
+                        let txtSeed = r.x * 123 + r.y * 456;
+                        const rand = () => { let x = Math.sin(txtSeed++) * 10000; return x - Math.floor(x); };
+                        let label = "";
+                        if (r.color === '#F6CE24') label = "收藏夹";
+                        else if (r.color === '#FFFFFF') label = "ExDiary";
+                        else if (r.color === '#D20E1C') label = "实验列表";
+                        else if (r.color === '#1A3E92') label = rand() > 0.5 ? "分析中心" : "时间线";
+
+                        transitionState = {
+                            active: true, progress: 0, navigated: false,
+                            startX: screenX, startY: screenY, startW: screenW, startH: screenH,
+                            color: r.color, label: label
+                        };
+                        return;
+                    }
+                }
+            }
+        });
+
+        function render() {
+            if (!transitionState.active) {
+                const baseTurnSpeed = 0.0006;
+                time += baseTurnSpeed * 0.75; 
+
+                const baseMoveSpeed = 0.4;
+                const currentMoveSpeed = baseMoveSpeed * 0.75;
+                
+                currentSpeedX = Math.cos(time) * currentMoveSpeed;
+                currentSpeedY = Math.sin(time) * currentMoveSpeed;
+
+                camera.x += currentSpeedX;
+                camera.y += currentSpeedY;
+            }
+
+            const viewW = canvas.width / ZOOM;
+            const viewH = canvas.height / ZOOM;
+
+            const minCx = Math.floor((camera.x - CHUNK_SIZE) / CHUNK_SIZE);
+            const maxCx = Math.floor((camera.x + viewW + CHUNK_SIZE) / CHUNK_SIZE);
+            const minCy = Math.floor((camera.y - CHUNK_SIZE) / CHUNK_SIZE);
+            const maxCy = Math.floor((camera.y + viewH + CHUNK_SIZE) / CHUNK_SIZE);
+
+            for (let cx = minCx; cx <= maxCx; cx++) {
+                for (let cy = minCy; cy <= maxCy; cy++) {
+                    const key = getChunkKey(cx, cy);
+                    if (!activeChunks.has(key)) {
+                        activeChunks.set(key, generateChunk(cx, cy, activeChunks));
+                    }
+                }
+            }
+
+            for (const key of activeChunks.keys()) {
+                const [cx, cy] = key.split(',').map(Number);
+                if (cx < minCx - 1 || cx > maxCx + 1 || cy < minCy - 1 || cy > maxCy + 1) {
+                    activeChunks.delete(key);
+                }
+            }
+
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            ctx.scale(ZOOM, ZOOM);
+
+            for (const chunkRects of activeChunks.values()) {
+                for (const rect of chunkRects) {
+                    const drawX = rect.x - camera.x;
+                    const drawY = rect.y - camera.y;
+
+                    if (drawX + rect.w < 0 || drawX > viewW || drawY + rect.h < 0 || drawY > viewH) {
+                        continue;
+                    }
+
+                    const expectedThicknessH = 0.5 + rect.w * 0.03; 
+                    const expectedThicknessV = 0.5 + rect.h * 0.03; 
+                    const insetX = expectedThicknessV / 2;
+                    const insetY = expectedThicknessH / 2;
+
+                    ctx.fillStyle = rect.color;
+                    ctx.fillRect(
+                        drawX + insetX, 
+                        drawY + insetY, 
+                        rect.w - (insetX * 2), 
+                        rect.h - (insetY * 2)
+                    );
+
+                    // 渲染动态文字排版
+                    ctx.save();
+                    let txtSeed = rect.x * 123 + rect.y * 456; 
+                    const randTxt = () => { let x = Math.sin(txtSeed++) * 10000; return x - Math.floor(x); };
+                    
+                    let label = "";
+                    if (rect.color === '#F6CE24') label = "收藏夹";
+                    else if (rect.color === '#FFFFFF') label = "ExDiary";
+                    else if (rect.color === '#D20E1C') label = "实验列表";
+                    else if (rect.color === '#1A3E92') label = randTxt() > 0.5 ? "分析中心" : "时间线";
+                    
+                    if (label) {
+                        ctx.fillStyle = (rect.color === '#FFFFFF' || rect.color === '#F6CE24') ? '#000000' : '#FFFFFF';
+                        
+                        const availW = rect.w - insetX * 2;
+                        const availH = rect.h - insetY * 2;
+                        
+                        ctx.beginPath();
+                        ctx.rect(drawX + insetX, drawY + insetY, availW, availH);
+                        ctx.clip();
+                        
+                        // --- 核心修改：直接读取生成时锁定的固有边，彻底消除闪烁跳变 ---
+                        const edge = rect.edge !== undefined ? rect.edge : 0; 
+                        
+                        let maxLength = (edge === 0 || edge === 2) ? availW : availH;
+                        let maxDepth = (edge === 0 || edge === 2) ? availH : availW;
+                        maxLength -= 12; 
+                        maxDepth -= 6;   
+
+                        if (maxLength > 15 && maxDepth > 5) {
+                            ctx.font = `bold 10px sans-serif`;
+                            let testWidth = ctx.measureText(label).width;
+                            
+                            let idealFontSize = 10 * (maxLength / testWidth);
+                            let fontSize = Math.min(idealFontSize, maxDepth);
+                            ctx.font = `bold ${fontSize}px sans-serif`;
+                            
+                            let textWidth = ctx.measureText(label).width;
+                            const alignOffset = randTxt();
+                            const availableSpace = maxLength - textWidth;
+                            const offset = 6 + availableSpace * alignOffset;
+                            
+                            ctx.translate(drawX + insetX, drawY + insetY);
+                            
+                            if (edge === 0) { 
+                                ctx.translate(availW, 0);
+                                ctx.rotate(Math.PI);
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillText(label, offset, -4);
+                            } else if (edge === 1) { 
+                                ctx.translate(availW, availH);
+                                ctx.rotate(-Math.PI / 2);
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillText(label, offset, -4);
+                            } else if (edge === 2) { 
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillText(label, offset, availH - 4);
+                            } else if (edge === 3) { 
+                                ctx.rotate(Math.PI / 2);
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillText(label, offset, -4);
+                            }
+                        }
+                    }
+                    ctx.restore();
+                }
+            }
+            ctx.restore();
+
+            if (transitionState.active) {
+                transitionState.progress += 0.04;
+                if (transitionState.progress > 1) transitionState.progress = 1;
+
+                const p = 1 - Math.pow(1 - transitionState.progress, 3);
+
+                const curX = transitionState.startX + (0 - transitionState.startX) * p;
+                const curY = transitionState.startY + (0 - transitionState.startY) * p;
+                const curW = transitionState.startW + (canvas.width - transitionState.startW) * p;
+                const curH = transitionState.startH + (canvas.height - transitionState.startH) * p;
+
+                ctx.fillStyle = transitionState.color;
+                ctx.fillRect(curX, curY, curW, curH);
+
+                if (transitionState.progress === 1 && !transitionState.navigated) {
+                    transitionState.navigated = true;
+                    
+                    setTimeout(() => {
+                        const mockPage = document.getElementById('mock-page');
+                        const mockTitle = document.getElementById('mock-page-title');
+                        
+                        mockPage.style.display = 'flex';
+                        mockPage.style.backgroundColor = transitionState.color;
+                        mockTitle.innerText = transitionState.label;
+                        
+                        mockPage.style.color = (transitionState.color === '#FFFFFF' || transitionState.color === '#F6CE24') ? '#000000' : '#FFFFFF';
+                    }, 50);
+                }
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Agent Session - De Stijl Lab</title>
+    <style>
+        /* 基础重置 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #FFFFFF; color: #111; border: 12px solid #111; height: 100vh; overflow: hidden; display: flex; flex-direction: column;}
+
+        /* 顶部 Header */
+        .header { padding: 30px 20px; border-bottom: 12px solid #111; background-color: #FFFFFF;}
+        .header h1 { font-size: 2.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin: 0; line-height: 1; }
+
+        /* 对话区：弹性布局 */
+        .chat-container { flex: 1; padding: 30px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;}
+
+        /* 用户消息：黑框 */
+        .message-user { align-self: flex-end; border: 4px solid #111; padding: 15px 20px; max-width: 70%; background-color: #FFFFFF; }
+
+        /* AI消息：左侧红色粗线 */
+        .message-ai { align-self: flex-start; border-left: 12px solid #E32636; padding: 15px 20px; max-width: 80%; background-color: #f4f4f4; color: #444; line-height: 1.6;}
+
+        /* 代码块处理 */
+        .message-ai pre { background-color: #111; color: white; padding: 15px; margin-top: 15px; font-family: 'Courier New', Courier, monospace; position: relative; }
+        .message-ai pre::before { content: 'PYTHON'; position: absolute; top: 0; left: 0; background-color: #1D54A6; padding: 3px 10px; font-size: 0.8rem;}
+
+        /* 底部输入区 */
+        .input-section { border-top: 12px solid #111; display: flex;}
+        .input-section input { flex: 1; padding: 20px; border: none; border-right: 12px solid #111; font-size: 1.1rem; outline: none; }
+        .send-btn { width: 80px; background-color: #F8D030; display: flex; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; border: none; font-size: 1.5rem;}
+        .send-btn:hover { background-color: #111; color: white;}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Stijl Labs</h1>
+    </header>
+
+    <main class="chat-container">
+        <div class="message-ai">我是实验记录助手。您可以直接告诉我：帮我新建一个电催化工作流记录，或描述您的实验操作...</div>
+        
+        <div class="message-user">帮我新建一个名为“钙钛矿制备流程”的记录。</div>
+
+        <div class="message-ai">已成功新建名为“钙钛矿制备流程”的记录。下一步，请提供实验状态(进行中/已完成)以及旋涂参数(rpm/s)。或者，我可以为您生成 Manim 动画脚本来演示界面旋涂过程？</div>
+    </main>
+    
+    <footer class="input-section">
+        <input type="text" placeholder="输入对话指令，或描述您的实验操作...">
+        <button class="send-btn">send</button>
+    </footer>
+</body>
+</html>

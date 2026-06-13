@@ -432,7 +432,43 @@ def index():
     pinned.sort(key=lambda e: pinned_ids.index(e["id"]) if e["id"] in pinned_ids else 99)
     # Merge: pinned first, then others
     sorted_experiments = pinned + others
+
+    # Build recent experiment snippets for the dashboard tiles
+    import json as _json
+    recent_snippets = []
+    for exp in store.list_all_full()[:8]:
+        snippet = {
+            "id": exp.get("id"),
+            "title": (exp.get("title") or "")[:40],
+            "date": exp.get("date", ""),
+            "status": exp.get("status", ""),
+            "tags": exp.get("tags", [])[:3],
+            "conclusion": (exp.get("conclusion") or "")[:60],
+        }
+        recent_snippets.append(snippet)
+
     return render_template("index.html", experiments=sorted_experiments,
+                           pinned_ids=pinned_ids,
+                           recent_snippets_json=_json.dumps(recent_snippets, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# Experiment list page (traditional card view)
+# ---------------------------------------------------------------------------
+@app.route("/experiments")
+def experiment_list():
+    experiments = store.list_all()
+    pinned_ids = favorites_store.get_pinned()
+    pinned = []
+    others = []
+    for exp in experiments:
+        if exp["id"] in pinned_ids:
+            pinned.append(exp)
+        else:
+            others.append(exp)
+    pinned.sort(key=lambda e: pinned_ids.index(e["id"]) if e["id"] in pinned_ids else 99)
+    sorted_experiments = pinned + others
+    return render_template("experiments.html", experiments=sorted_experiments,
                            pinned_ids=pinned_ids)
 
 

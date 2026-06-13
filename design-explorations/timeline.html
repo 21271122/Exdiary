@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Timeline - De Stijl Lab</title>
+    <style>
+        /* 基础重置 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #FFFFFF; color: #111; border: 12px solid #111; min-height: 100vh; padding-bottom: 50px;}
+
+        /* 顶部 Header */
+        .header { padding: 30px 20px; border-bottom: 12px solid #111; background-color: #FFFFFF;}
+        .header h1 { font-size: 2.5rem; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin: 0; line-height: 1; }
+
+        /* 内容区与时间轴核心骨架 */
+        .content { padding: 40px; position: relative; display: flex; flex-direction: column; align-items: center; }
+        .timeline-axis { position: absolute; top: 0; bottom: 0; left: 50%; width: 12px; background-color: #111; transform: translateX(-50%); }
+
+        /* 时间轴条目容器 */
+        .timeline-item { position: relative; width: 100%; max-width: 900px; display: flex; margin-bottom: 40px; }
+
+        /* 锚点色块 */
+        .timeline-anchor { position: absolute; top: 15px; left: 50%; width: 24px; height: 12px; transform: translateX(-50%); border: 2px solid #111; background-color: #F8D030; z-index: 10; }
+        .item-left .timeline-anchor { background-color: #E32636; }
+
+        /* 内容卡片 */
+        .timeline-card { border: 6px solid #111; background-color: #FFFFFF; padding: 20px; width: 45%; position: relative;}
+        .item-left .timeline-card { margin-right: auto;}
+        .item-right .timeline-card { margin-left: auto;}
+
+        /* 时钟图标与内容样式 */
+        .clock-icon { font-size: 1.2rem; margin-right: 8px;}
+        .time-label { font-weight: 900; font-size: 1.1rem; margin-bottom: 10px; border-bottom: 4px solid #111; padding-bottom: 5px;}
+        .timeline-card p { color: #444; font-size: 1rem; line-height: 1.4; }
+
+        /* 底部状态栏 */
+        .bottom-nav { position: fixed; bottom: 0; width: 100%; background-color: #111; color: #FFF; padding: 10px 20px; font-weight: bold; display: flex; justify-content: space-between; z-index: 100;}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Timeline</h1>
+    </header>
+
+    <main class="content">
+        <div class="timeline-axis"></div>
+
+        <article class="timeline-item item-left">
+            <div class="timeline-anchor"></div>
+            <div class="timeline-card">
+                <div class="time-label"><span class="clock-icon">🕒</span>9:00 AM</div>
+                <p>启动电催化合成工作流：石墨烯制备预处理参数记录完毕。</p>
+            </div>
+        </article>
+        
+        <article class="timeline-item item-right">
+            <div class="timeline-anchor"></div>
+            <div class="timeline-card">
+                <div class="time-label"><span class="clock-icon">🕒</span>11:30 AM</div>
+                <p>AI 系统提交：NRR 反应 DFT 计算初步排查，N2 side-on 吸附构型已加入并发验证流程。</p>
+            </div>
+        </article>
+
+        <article class="timeline-item item-left">
+            <div class="timeline-anchor"></div>
+            <div class="timeline-card">
+                <div class="time-label"><span class="clock-icon">🕒</span>2:30 PM</div>
+                <p>修正了弦振动动画脚本。重新运行了基于 Manim 的物理过程动画序列。</p>
+            </div>
+        </article>
+    </main>
+    
+    <footer class="bottom-nav">
+        <span>STIJL LABS AGENT</span>
+        <span>SYSTEM ONLINE</span>
+    </footer>
+</body>
+</html>

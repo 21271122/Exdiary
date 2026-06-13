@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent - De Stijl UI</title>
+    <style>
+        /* 基础重置与黑色背景（作为线条） */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { width: 100vw; height: 100vh; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #1a1a1a; }
+
+        /* 主舞台容器 */
+        #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+
+        /* 统一的色块基础样式 */
+        .block {
+            position: absolute;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            /* 核心：使用 cubic-bezier 让动画有“先快后慢”的丝滑感 */
+            transition: all 0.7s cubic-bezier(0.76, 0, 0.24, 1);
+            overflow: hidden;
+            z-index: 10;
+        }
+
+        /* 未展开时的标题 */
+        .block-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            /* 抵消裁剪路径的倾斜感，给文字也加一点轻微的倾斜 */
+            transform: rotate(-15deg);
+            transition: opacity 0.3s;
+        }
+
+        /* 隐藏的子页面内容 */
+        .block-content {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            padding: 80px 40px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+            transform: rotate(0);
+        }
+
+        /* 颜色与初始形状划分 (基于 clip-path) */
+        /* 左上角：红色 - 实验列表 */
+        #exp-list {
+            background-color: #E32636; color: white;
+            top: 0; left: 0; width: 60%; height: 60%;
+            clip-path: polygon(0 0, 95% 0, 0 95%);
+        }
+        
+        /* 右上角：蓝色 - 收藏夹 */
+        #favorites {
+            background-color: #1D54A6; color: white;
+            top: 0; right: 0; width: 65%; height: 50%;
+            clip-path: polygon(20% 0, 100% 0, 100% 100%);
+        }
+
+        /* 左下角：黄色 - 分析中心 */
+        #analysis {
+            background-color: #F8D030; color: #1a1a1a;
+            bottom: 0; left: 0; width: 50%; height: 65%;
+            clip-path: polygon(0 20%, 100% 100%, 0 100%);
+        }
+
+        /* 右下角：蓝色 - 时间轴 */
+        #timeline {
+            background-color: #1D54A6; color: white;
+            bottom: 0; right: 0; width: 70%; height: 70%;
+            clip-path: polygon(100% 15%, 100% 100%, 15% 100%);
+        }
+
+        /* 中心：白色 - AI Agent 对话 (层级略高) */
+        #agent {
+            background-color: #FFFFFF; color: #1a1a1a;
+            top: 15%; left: 15%; width: 70%; height: 70%;
+            clip-path: polygon(50% 5%, 95% 50%, 50% 95%, 5% 50%);
+            z-index: 20;
+        }
+
+        /* ----------------------------------------- */
+        /* 展开动画状态 (.active) */
+        /* ----------------------------------------- */
+        .block.active {
+            top: 0 !important; left: 0 !important; right: auto !important; bottom: auto !important;
+            width: 100vw !important; height: 100vh !important;
+            /* 裁剪路径恢复为完整的全屏矩形 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%) !important;
+            z-index: 100;
+            cursor: default;
+        }
+
+        /* 展开后隐藏主标题 */
+        .block.active .block-title { opacity: 0; }
+
+        /* 展开后显示详细内容 */
+        .block.active .block-content {
+            opacity: 1;
+            pointer-events: auto;
+            transition-delay: 0.3s; /* 等外框放大差不多了再显示内容 */
+        }
+
+        /* 子页面 UI 细节 */
+        h1 { font-size: 3rem; margin-bottom: 20px; text-transform: uppercase; border-bottom: 4px solid #1a1a1a; padding-bottom: 10px; display: inline-block;}
+        .card { background: rgba(255,255,255,0.9); color: #1a1a1a; padding: 20px; margin-bottom: 15px; border: 3px solid #1a1a1a; box-shadow: 8px 8px 0px rgba(0,0,0,0.2); }
+        .close-btn { position: absolute; top: 30px; right: 40px; font-size: 2rem; font-weight: bold; cursor: pointer; color: inherit; z-index: 101;}
+        .white .close-btn { color: #1a1a1a; }
+    </style>
+</head>
+<body>
+
+<div id="stage">
+    
+    <div class="block" id="exp-list" onclick="expandBlock(this)">
+        <div class="block-title">EXPERIMENT LIST</div>
+        <div class="block-content">
+            <div class="close-btn" onclick="closeBlock(event, this)">✕</div>
+            <h1>Experiment List</h1>
+            <div class="card">
+                <h3>[2026-05-12] Co-N4-C 恒电位突变测试</h3>
+                <p>ORR 反应路径追踪。使用 VASP 进行了单原子催化剂界面的能级计算。</p>
+            </div>
+            <div class="card">
+                <h3>[2026-04-28] 钙钛矿 SAM 修饰层制备</h3>
+                <p>界面工程预实验记录，旋涂参数：4000 rpm, 30s。</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="block" id="favorites" onclick="expandBlock(this)">
+        <div class="block-title">FAVORITES</div>
+        <div class="block-content">
+            <div class="close-btn" onclick="closeBlock(event, this)">✕</div>
+            <h1>Favorites</h1>
+            <div class="card">★ NO3RR 反应机理文献汇总</div>
+            <div class="card">★ YOLOv8 铝材缺陷检测数据集构建 SOP</div>
+        </div>
+    </div>
+
+    <div class="block" id="analysis" onclick="expandBlock(this)">
+        <div class="block-title">ANALYSIS HUB</div>
+        <div class="block-content" style="color: #1a1a1a;">
+            <div class="close-btn" onclick="closeBlock(event, this)">✕</div>
+            <h1 style="border-color: #1a1a1a;">Analysis Hub</h1>
+            <div class="card">
+                <h3>VASP 能量收敛分析</h3>
+                <p>AI Agent 总结：当前 d-band shift 趋势符合预期，建议下一步检查 N2 side-on 吸附构型的数据。</p>
+            </div>
+            <div class="card">
+                <h3>KDJ/RSI 策略回测报告</h3>
+                <p>胜率：62.5%。最大回撤率控制在 15% 以内。</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="block" id="timeline" onclick="expandBlock(this)">
+        <div class="block-title">TIMELINE</div>
+        <div class="block-content">
+            <div class="close-btn" onclick="closeBlock(event, this)">✕</div>
+            <h1>Timeline</h1>
+            <div class="card" style="border-left: 10px solid #F8D030;">10:00 AM - 记录了新的 GC-DFT 计算参数</div>
+            <div class="card" style="border-left: 10px solid #E32636;">14:30 PM - 修正了 Manim 弦振动动画脚本</div>
+        </div>
+    </div>
+
+    <div class="block" id="agent" onclick="expandBlock(this)">
+        <div class="block-title" style="transform: rotate(0); font-size: 2rem;">STIJL LABS</div>
+        <div class="block-content">
+            <div class="close-btn" onclick="closeBlock(event, this)">✕</div>
+            <h1>AI Agent Session</h1>
+            <div class="card" style="width: 80%; margin: 0 auto; min-height: 400px; display: flex; flex-direction: column; justify-content: flex-end;">
+                <p style="margin-bottom: 20px; color: #666;">[系统提示] 实验记录助手已就绪。你可以直接告诉我：“帮我新建一个电催化实验记录”...</p>
+                <input type="text" placeholder="输入对话指令，或描述您的实验操作..." style="width: 100%; padding: 15px; border: 2px solid #1a1a1a; font-size: 1.1rem; outline: none;">
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // 展开色块
+    function expandBlock(element) {
+        // 如果当前已经有展开的，先忽略（或者你也可以写逻辑强制关闭其他）
+        if(element.classList.contains('active')) return;
+        
+        // 移除其他所有块的 active 状态
+        document.querySelectorAll('.block').forEach(el => el.classList.remove('active'));
+        
+        // 为当前点击的块添加 active 状态
+        element.classList.add('active');
+    }
+
+    // 关闭色块
+    function closeBlock(event, closeBtnElement) {
+        // 阻止事件冒泡，防止触发父级 block 的 onclick 导致再次展开
+        event.stopPropagation();
+        
+        // 找到父级的 block 并移除 active 类
+        const block = closeBtnElement.closest('.block');
+        block.classList.remove('active');
+    }
+</script>
+
+</body>
+</html>
