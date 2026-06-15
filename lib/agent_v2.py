@@ -10,634 +10,42 @@ from datetime import datetime
 from pathlib import Path
 
 from lib.logger import get_logger
-
-# ============================================================================
-# Step 1.1: Tool Definitions (OpenAI function calling format)
-# ============================================================================
-
-TOOL_LOAD_REFERENCE = {
-    "type": "function",
-    "function": {
-        "name": "load_reference",
-        "description": (
-            "加载引用实验的完整数据（SOP、参数、结果、结论等）。"
-            "仅接受 EXP ID 格式（如 EXP-2026-003）。"
-            "用户说'跟003一样'时，请自行补全为 EXP-2026-003 后调用。"
-            "模糊描述（如'上次的ZnO实验'）请用 search_experiments。"
-            "结果写回messages，你可据此判断哪些字段可直接继承。"
-            "已加载过的实验无需重复调用——数据已在 messages 中。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "refs": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "实验编号（EXP-YYYY-NNN 格式）。不是模糊描述。",
-                }
-            },
-            "required": ["refs"],
-        },
-    },
-}
-
-TOOL_SEARCH_EXPERIMENTS = {
-    "type": "function",
-    "function": {
-        "name": "search_experiments",
-        "description": (
-            "在历史实验库中搜索。处理各种自然语言描述：\n"
-            "- 时间指代：'上周的''最近的''上个月的'\n"
-            "- 人员指代：'老张做的''我上次做的'\n"
-            "- 状态指代：'失败的那个''成功的那个'\n"
-            "- 材料指代：'做ZnO的那个''用了P25的'\n"
-            "- 性能指代：'降解率最高的'\n"
-            "返回候选列表。如用户确认候选，再调 load_reference 加载完整数据。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "搜索关键词或自然语言描述",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-}
-
-TOOL_UPDATE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "update_schema",
-        "description": (
-            "将本轮确认的信息写入Schema。写入后系统自动更新messages中的Schema状态摘要。"
-            "注意: messages中已有当前Schema状态和引用实验数据，写入前请自行比对——"
-            "新值与已有数据矛盾时，先向用户求证再写入，不要写入矛盾值后又覆盖。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "fields": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "date": {"type": "string"},
-                        "experimenter": {"type": "string"},
-                        "status": {
-                            "type": "string",
-                            "enum": ["planned", "running", "done", "failed", "repeated"],
-                        },
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "purpose": {"type": "string"},
-                        "materials": {"type": "array"},
-                        "equipment": {"type": "array"},
-                        "experimental_plan": {"type": "array"},
-                        "sop": {"type": "array", "items": {"type": "string"}},
-                        "process_parameters": {"type": "array"},
-                        "observations": {"type": "object"},
-                        "characterization": {"type": "array"},
-                        "results": {"type": "object"},
-                        "conclusion": {"type": "string"},
-                        "next_steps": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "description": "要更新的字段。增量更新——只传变化的。空列表[]或空对象{}表示清空。",
-                },
-                "round_summary": {
-                    "type": "string",
-                    "description": "一句话描述本轮收集/确认了哪些信息（用于日志）",
-                },
-            },
-            "required": ["fields"],
-        },
-    },
-}
-
-TOOL_ASK_USER = {
-    "type": "function",
-    "function": {
-        "name": "ask_user",
-        "description": (
-            "向用户提问。一次最多3个问题。问题应具体、可回答。"
-            "依据: 看messages中Schema状态的缺失字段 + system prompt中的优先级清单，"
-            "自己决定问什么、问几个。缺失的都是补充字段时可跳过直接结束。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 3,
-                }
-            },
-            "required": ["questions"],
-        },
-    },
-}
-
-TOOL_GENERATE_RECORD = {
-    "type": "function",
-    "function": {
-        "name": "generate_record",
-        "description": (
-            "生成实验记录草稿。当你判断实验信息已收集完毕、核心字段（目的、"
-            "材料、步骤/参数、结果/结论）已填充时调用。调用后系统生成结构化"
-            "记录并在前端展示预览面板，用户确认后保存。不要只输出纯文本等待——"
-            "调用本工具是生成记录的唯一途径。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
-
-TOOL_START_RECORD_THREAD = {
-    "type": "function",
-    "function": {
-        "name": "start_record_thread",
-        "description": (
-            "开始一个实验记录线程。当用户明确表达要记录新实验时调用"
-            "（如'记录新实验''帮我记一下''做了个...'等）。"
-            "调用后标记对话进入记录模式，后续对话归属该线程。"
-            "不要在查询、修改、闲聊时调用。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
-
-TOOL_END_THREAD = {
-    "type": "function",
-    "function": {
-        "name": "end_thread",
-        "description": (
-            "结束当前对话线程（record 或 analyze）。"
-            "用户明确表示取消、结束、不继续时调用"
-            "（如'算了''不记了''取消''结束线程'等）。"
-            "调用后系统归档线程，自动清理状态，对话回到自由模式。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
-
-TOOL_START_ANALYZE_THREAD = {
-    "type": "function",
-    "function": {
-        "name": "start_analyze_thread",
-        "description": (
-            "开始一个跨实验分析线程。当用户明确表达要分析实验数据时调用"
-            "（如'分析一下''帮我看看这些实验''对比钙钛矿PCE'等）。"
-            "调用后进入分析模式，后续对话归属该线程。"
-            "不要在记录实验、查询、闲聊时调用。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
-
-TOOL_SELECT_EXPERIMENTS = {
-    "type": "function",
-    "function": {
-        "name": "select_experiments",
-        "description": (
-            "向用户展示实验选择面板，让用户勾选参与分析的实验。"
-            "当用户说'筛选''过滤''选实验''挑实验'等，或你需要让用户从多个实验中做选择时，"
-            "必须调用本工具——不要用纯文本表格代替。"
-            "传入 candidates 作为候选列表（通常来自 search_experiments 或 list_experiments）。"
-            "可传入 preselected 预勾选已确定的实验。"
-            "用户勾选确认后，选中的 EXP ID 列表作为 tool_result 回传。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "candidates": {
-                    "type": "array", "items": {"type": "object"},
-                    "description": "候选实验列表，每项含 id/title/date/tags",
-                },
-                "preselected": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "预勾选的 EXP ID 列表",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "面板标题，如'选择要分析的钙钛矿实验'",
-                },
-            },
-            "required": ["candidates"],
-        },
-    },
-}
-
-TOOL_GENERATE_ANALYSIS = {
-    "type": "function",
-    "function": {
-        "name": "generate_analysis",
-        "description": (
-            "执行跨实验分析并归档。当实验已选定、需求明确时调用。"
-            "分析报告直接存储到本地分析历史，不在对话中显示全文。"
-            "调用后自动结束分析线程，回到自由模式。"
-            "这是生成分析报告的唯一途径。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "分析问题，如'对比钙钛矿PCE趋势'",
-                },
-                "refs": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "参与分析的 EXP ID 列表，至少2个",
-                },
-            },
-            "required": ["query", "refs"],
-        },
-    },
-}
-
-TOOL_MODIFY_ANALYSIS = {
-    "type": "function",
-    "function": {
-        "name": "modify_analysis",
-        "description": (
-            "修改分析报告。支持三种操作模式：\n"
-            "1. 修改文字：changes 传入新的完整 Markdown 文本，直接覆盖\n"
-            "2. 新增实验并重新分析：additional_refs 传入额外 EXP ID，"
-            "合并原有实验后重新运行分析\n"
-            "3. 新增分析维度：additional_query 传入补充问题，"
-            "在原报告基础上追加分析\n"
-            "所有修改自动保存到 AnalysisStore。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "changes": {"type": "string", "description": "修改后的完整 Markdown 报告"},
-                "additional_refs": {"type": "array", "items": {"type": "string"},
-                                   "description": "额外纳入分析的 EXP ID"},
-                "additional_query": {"type": "string", "description": "补充的分析问题/维度"},
-            },
-        },
-    },
-}
-
-TOOL_READ_UPDATE_LOG = {
-    "type": "function",
-    "function": {
-        "name": "read_update_log",
-        "description": "读取某个实验的更新日志。当需要确认字段是否被修改过时调用。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "exp_id": {"type": "string", "description": "实验编号 EXP-YYYY-NNN"},
-                "since": {"type": "string", "description": "可选，只返回此时间之后的更新"},
-                "limit": {"type": "integer", "description": "最多返回几条，默认 5"},
-            },
-            "required": ["exp_id"],
-        },
-    },
-}
-
-TOOL_MODIFY_EXPERIMENT = {
-    "type": "function",
-    "function": {
-        "name": "modify_experiment",
-        "description": (
-            "修改实验字段。changes 中未出现的字段保持磁盘现有值不变（增量语义）。"
-            "嵌套数组字段的值是完整的数组替换——请先通过 load_reference 获取当前完整数组，"
-            "修改目标条目后传回完整数组。所有修改自动写入更新日志。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "refs": {"type": "array", "items": {"type": "string"},
-                         "description": "要修改的实验编号列表"},
-                "changes": {
-                    "type": "object",
-                    "description": "扁平字段名→新值映射。简单字段覆盖，数组字段完整替换。",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "自然语言修改描述。与 changes 二选一。",
-                },
-            },
-            "required": ["refs"],
-        },
-    },
-}
-
-TOOL_MANAGE_COLLECTION = {
-    "type": "function",
-    "function": {
-        "name": "manage_collection",
-        "description": "管理实验的收藏和置顶。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string",
-                           "enum": ["pin", "unpin", "favorite", "unfavorite"]},
-                "refs": {"type": "array", "items": {"type": "string"}},
-                "collection": {"type": "string", "description": "收藏夹名称，默认'默认收藏夹'"},
-            },
-            "required": ["action", "refs"],
-        },
-    },
-}
-
-TOOL_QUERY_EXPERIMENT = {
-    "type": "function",
-    "function": {
-        "name": "query_experiment",
-        "description": "回答实验参数查询。用户提问模糊时可能需要多轮确认。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "question": {"type": "string", "description": "用户的问题"},
-                "refs": {"type": "array", "items": {"type": "string"},
-                         "description": "要查询的实验编号列表"},
-            },
-            "required": ["question", "refs"],
-        },
-    },
-}
-
-TOOL_LIST_EXPERIMENTS = {
-    "type": "function",
-    "function": {
-        "name": "list_experiments",
-        "description": "按条件筛选实验列表。确定性执行，不调 LLM。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string",
-                           "enum": ["planned", "running", "done", "failed", "repeated"]},
-                "tags": {"type": "array", "items": {"type": "string"}},
-                "experimenter": {"type": "string"},
-                "since": {"type": "string", "description": "起始日期 YYYY-MM-DD"},
-            },
-        },
-    },
-}
-
-TOOLS_OPENAI_FORMAT = [
-    TOOL_LOAD_REFERENCE,
-    TOOL_SEARCH_EXPERIMENTS,
-    TOOL_START_RECORD_THREAD,
-    TOOL_UPDATE_SCHEMA,
-    TOOL_ASK_USER,
-    TOOL_GENERATE_RECORD,
-    TOOL_READ_UPDATE_LOG,
-    TOOL_MODIFY_EXPERIMENT,
-    TOOL_MANAGE_COLLECTION,
-    TOOL_QUERY_EXPERIMENT,
-    TOOL_LIST_EXPERIMENTS,
-    TOOL_END_THREAD,
-    TOOL_START_ANALYZE_THREAD,
-    TOOL_SELECT_EXPERIMENTS,
-    TOOL_GENERATE_ANALYSIS,
-    TOOL_MODIFY_ANALYSIS,
-]
-
-# ============================================================================
-# Step 1.7: SYSTEM_PROMPT
-# ============================================================================
-
-SYSTEM_PROMPT = """\
-你是 Exdiary 实验记录助手。你与用户对话，逐步收集实验信息，
-最终生成完整的结构化实验记录。
-
-## 对话模式
-
-你有三种工作模式。**当前模式由每轮对话最末尾的 [系统状态] 消息严格确定——你必须以此消息为准，而非依赖对话记忆或用户陈述。**
-
-### 自由模式（末尾消息 = "[系统状态] 自由模式"）
-你可回答查询、管理收藏、闲聊。
-要进入 record 模式 → 调用 start_record_thread。
-要进入 analyze 模式 → 调用 start_analyze_thread。
-
-### record 模式（末尾消息 = "[系统状态] record 线程进行中"）
-你正在收集实验信息。可用 record 专用工具：start_record_thread、
-update_schema、ask_user、generate_record。
-目标：generate_record。
-
-### analyze 模式（末尾消息 = "[系统状态] analyze 线程进行中"）
-你正在进行跨实验分析。可用 analyze 专用工具：
-- start_analyze_thread: 开启分析线程
-- select_experiments: 展示实验选择面板（必须调用，不要用纯文本代替）
-- ask_user: 了解分析需求
-- generate_analysis: 执行分析并归档，报告自动包含 事实呈现/发现提示/值得思考的问题
-
-工作方式：
-1. search_experiments 或 list_experiments 缩小实验范围
-2. 必须调用 select_experiments 展示选择面板
-3. 用户勾选确认后，load_reference 加载数据
-4. **与用户讨论分析角度。** ask_user 了解：
-   - 用户最关心什么问题？
-   - 有什么具体困惑或假设想验证？
-   不要假设用户想要标准报告。根据需求定制分析框架。
-5. 需求明确 → generate_analysis 执行分析并归档，调用后线程自动结束
-
-注意：start_record_thread、update_schema、generate_record、modify_experiment
-在此模式中不可用。
-
-## 工作方式
-
-你有多个工具（根据当前模式过滤可用工具）。在 record 模式下:
-
-0. 如果用户明确表示要记录新实验（"记录新实验""帮我记""做了个..."等）
-   → 先调用 start_record_thread 开启实验记录线程。
-
-1. 如果用户引用了历史实验：
-   - 用户给了明确编号（如"EXP-003""003"）→ 直接拼成 'EXP-2026-xxx' 调 load_reference
-   - 用户用自然语言描述（如"上周的ZnO实验""老张做钙钛矿那次"）→ 调 search_experiments
-   - 搜索结果不明确时，把候选展示给用户确认，不要盲猜直接加载
-   - load_reference 只接受 EXP ID 格式，不接受自然语言。调用前请自行将缩写补全为完整编号
-   - 加载过的实验无需重复调用 load_reference（数据已在 messages 中）
-
-2. 因为每轮可能有多个对话来回，对于用户提供的信息，调用 update_schema 写入。
-   如加载了引用且用户说"完全一样"，将引用实验的匹配字段整批写入。
-   如用户说"xxx一样但改了yyy"，继承未改动的字段，改动字段等用户提供。
-
-3. 写入后系统自动更新 Schema 状态到 messages 中。
-   根据 Schema 状态判断: 如果关键字段还有缺失 → 调 ask_user 追问。
-   追问看两点: Schema 状态中的缺失字段 + 各类实验的优先级(见下方)。
-   自己决定问什么、问几个。不要一次问太多。
-
-4. 如果 Schema 状态显示关键字段基本齐备 → **调用 generate_record 工具**
-   来生成最终记录。调用这个工具是生成实验记录的唯一途径。
-   不要只输出纯文本等待系统自动处理——你必须主动调用工具。
-
-4a. 如果用户主动说"够了""直接生成""就这样"等 → 判断核心字段
-   是否已填。已填则调用 generate_record 生成记录。未填则
-   追问最后1-2个关键项，不要盲目生成残缺记录。
-
-## 消息格式说明
-
-以 "[系统内部]" 开头的系统消息是框架基础设施日志
-（如线程起止标记），不反映你当前的行为模式。
-你的当前模式由每轮对话最末尾的 "[系统状态]" 消息严格确定——必须以此为准。三种取值：
-- "[系统状态] 自由模式"
-- "[系统状态] record 线程进行中"
-- "[系统状态] analyze 线程进行中"
-
-## 工具清单
-
-### 通用工具（所有模式可用）
-- load_reference: 加载引用实验的完整数据。仅接受 EXP ID。加载过的不重复调用。
-- search_experiments: 语义搜索历史实验（模糊描述如"上次的ZnO实验"）。
-- query_experiment: 查询实验参数（如"003的退火温度是多少"）。
-- list_experiments: 按条件筛选实验列表。
-- modify_experiment: 修改已存在实验的字段。需先 load_reference 获取当前值。
-- read_update_log: 查看实验的修改历史。
-- manage_collection: 管理实验的收藏和置顶（最多置顶3个）。
-- end_thread: 结束当前对话线程（record 或 analyze）。用户说"算了""取消""结束线程"时调用。
-
-### record 专用工具（仅 "[系统状态] record 线程进行中" 时可用）
-- start_record_thread: 开启实验记录线程。
-- update_schema: 将确认的信息写入 Schema。增量更新，只传变化的字段。
-- ask_user: 向用户提问，一次最多3个。
-- generate_record: 生成结构化实验记录草稿。调用此工具是生成记录的唯一途径。
-
-### analyze 专用工具
-- start_analyze_thread: 开启跨实验分析线程。
-- select_experiments: 向用户展示实验选择面板，让用户勾选参与分析的实验。
-- generate_analysis: 执行分析并归档。分析报告存储到本地，返回标题和摘要。调用后自动结束线程。
-
-## 实验 Schema（16 字段）
-
-最终要填充的字段如下。record 模式下，Schema 状态会出现在每轮对话末尾，实时反映哪些已填、哪些缺失:
-
-1.  title               — 实验标题
-2.  date                — 日期 (YYYY-MM-DD)
-3.  experimenter        — 实验者
-4.  status              — planned|running|done|failed|repeated
-5.  tags                — 受控词汇(英文): photocatalysis, hydrothermal, sol-gel,
-                          spin-coating, ball-milling, electrochemistry, xrd,
-                          perovskite-solar, thin-film, calcination, doping,
-                          coating, battery, ceramic, polymer, composite, nano,
-                          synthesis, characterization
-6.  purpose             — 实验目的/科学问题
-7.  materials           — [{name, purity, vendor, amount, notes}]
-8.  equipment           — [{device, model, location}]
-9.  experimental_plan   — [{group, condition, expected}]
-10. sop                 — 操作步骤 [字符串数组]
-11. process_parameters  — [{step, parameter, setpoint, actual, deviation}]
-12. observations        — {no_anomalies: bool, items: [字符串]}
-13. characterization    — [{method, sample_id, preparation, ...}]
-14. results             — {qualitative: 字符串, key_data: [{metric, value, ...}]}
-15. conclusion          — 结论
-16. next_steps          — 下一步 [字符串数组]
-
-## 各实验类型关键参数优先级
-
-photocatalysis: P1 催化剂名称和纯度、目标污染物和浓度、光源类型和功率
-                P2 催化剂负载量、降解时间、表征手段
-                P3 基板类型、煅烧条件、溶液pH
-
-hydrothermal: P1 前驱体名称和用量、反应温度、反应时间
-              P2 溶剂类型和用量、目标产物、填充度
-              P3 升温速率、pH值、表面活性剂
-
-sol-gel: P1 前驱体名称、溶剂、水解抑制剂
-         P2 陈化温度和时间、干燥条件、煅烧温度
-         P3 滴加速率、催化剂用量、研磨条件
-
-spin-coating: P1 薄膜材料名称、基底类型、旋涂转速
-              P2 前驱体浓度和溶剂、退火温度和时间
-              P3 旋涂层数、预处理方式、气氛
-
-ball-milling: P1 原料名称和用量、球料比、球磨时间
-              P2 转速、球磨罐材质、磨球尺寸
-              P3 过程控制剂、气氛保护、停机间隔
-
-electrochemistry: P1 活性材料名称、电解液体系、测试类型
-                  P2 电压窗口、对电极/参比电极、活性物负载量
-                  P3 导电剂和粘结剂配比、测试温度、扫速
-
-xrd: P1 样品名称和形态、扫描范围、靶材类型
-     P2 管电压/管电流、扫描步长、物相检索数据库
-     P3 仪器型号、制样方式、晶粒尺寸计算
-
-perovskite-solar: P1 钙钛矿组分和配比、ETL/HTL材料、退火温度和时间
-                  P2 旋涂参数、反溶剂、电极材料和厚度
-                  P3 有效面积、测试光源条件、器件结构
-
-## 矛盾检测
-
-写入 Schema 前，自行比对 messages 中的已有信息:
-- Schema 状态中的已有值 vs 用户本轮提供的新值（是否自矛盾）
-- 已加载引用实验(tool 返回的数据)中的记录 vs 用户本轮的说法（是否与引用矛盾）
-
-检测到矛盾时，先通过 ask_user 或自然语言向用户求证，
-确认后再调 update_schema 写入。不要写入矛盾值后又覆盖。
-不要自行修正矛盾。
-
-## 取消与结束线程
-
-如果用户明确表示不想继续当前操作（"算了""不记了""取消""结束线程"等），
-**调用 end_thread 工具**来结束当前线程，然后回复确认。
-不要只输出纯文本——你必须主动调用 end_thread。
-
-注意：generate_record 生成记录后也会自动结束 record 线程，无需额外调用 end_thread。
-
-## 事实获取规则
-
-对话历史中关于实验参数的陈述可能是过时的（实验可能被子 Agent 或手动编辑修改过）。
-当回答关于某个实验的具体数据时，遵循以下优先级：
-
-1. 如果对话中出现了 [EXP-xxx 已被修改] 的标记 → 必须调用 load_reference 重新加载
-2. 如果你本轮刚通过 modify_experiment 自己修改了该实验 → 可以信任自己的操作
-3. 其他情况 → 优先从 load_reference 的结果中获取，而非依赖对话记忆
-
-回答数据性问题时注明来源：
-  "EXP-015 当前退火温度是 200°C（已从文件确认）"
-
-## 行为准则
-
-- 中文回复，友好、具体
-- 不要编造任何用户未提及的信息
-- 用户说"跟EXP-xxx一样""完全一致"时，通过 update_schema 把引用实验数据写入
-- 一次追问不超过3项，优先问高优先级的缺失字段"""
-
-# ============================================================================
-# 默认上下文
-# ============================================================================
-
-DEFAULT_CONTEXT: dict = {
-    "title": "",
-    "date": "",
-    "experimenter": "",
-    "status": "planned",
-    "tags": [],
-    "purpose": "",
-    "materials": [],
-    "equipment": [],
-    "experimental_plan": [],
-    "sop": [],
-    "process_parameters": [],
-    "observations": {"no_anomalies": True, "items": []},
-    "characterization": [],
-    "results": {"qualitative": "", "key_data": [], "figures": []},
-    "conclusion": "",
-    "next_steps": [],
-}
-
-# ============================================================================
-# 辅助函数
-# ============================================================================
+from lib.core.agent_tools import (
+    TOOL_LOAD_REFERENCE, TOOL_SEARCH_EXPERIMENTS, TOOL_UPDATE_SCHEMA,
+    TOOL_ASK_USER, TOOL_GENERATE_RECORD, TOOL_START_RECORD_THREAD,
+    TOOL_END_THREAD, TOOL_START_ANALYZE_THREAD, TOOL_SELECT_EXPERIMENTS,
+    TOOL_GENERATE_ANALYSIS, TOOL_MODIFY_ANALYSIS, TOOL_READ_UPDATE_LOG,
+    TOOL_MODIFY_EXPERIMENT, TOOL_MANAGE_COLLECTION, TOOL_QUERY_EXPERIMENT,
+    TOOL_LIST_EXPERIMENTS, TOOLS_OPENAI_FORMAT,
+)
+from lib.core.prompts import build_system_prompt
+from lib.core.schema import DEFAULT_CONTEXT
+
+
+
+class ChildContext:
+    """子 Agent 标记。仅子 Agent 实例时有效。"""
+    __slots__ = ('is_child', 'is_legacy', 'exp_id', 'initial_history_len', 'agent_role')
+    def __init__(self):
+        self.is_child = False
+        self.is_legacy = False
+        self.exp_id = None
+        self.initial_history_len = 0
+        self.agent_role = None
+
+
+class ThreadState:
+    """线程状态。"""
+    __slots__ = ('id', 'type', 'pending_start', 'current_turn_user_idx', 'last_ended_id')
+    def __init__(self):
+        self.id = None
+        self.type = None
+        self.pending_start = None
+        self.current_turn_user_idx = -1
+        self.last_ended_id = None
+
+
+# Tool definitions, SYSTEM_PROMPT, and DEFAULT_CONTEXT migrated to lib/core/
 
 def merge_context(context: dict, fields: dict) -> dict:
     """增量合并。简单字段覆盖；数组追加去重；嵌套对象递归合并。"""
@@ -827,22 +235,22 @@ class ToolExecutor:
         """LLM 判断要开始记录时调用，在当前 user 消息之后插入线程开始标记。"""
         if not loop.thread_store:
             return {"error": "no_thread_store", "message": "线程存储未配置"}
-        if loop.thread_id:
-            if loop._thread_type == "analyze":
+        if loop.thread.id:
+            if loop.thread.type == "analyze":
                 loop.history.append({"role": "system",
-                    "content": f"[系统内部] thread_end id={loop.thread_id}"})
+                    "content": f"[系统内部] thread_end id={loop.thread.id}"})
                 loop.thread_store.set_active_thread(None)
-                loop.thread_id = None
-                loop._thread_type = None
+                loop.thread.id = None
+                loop.thread.type = None
             else:
-                return {"status": "already_started", "thread_id": loop.thread_id}
+                return {"status": "already_started", "thread_id": loop.thread.id}
         thread_id = loop.thread_store.next_id()
-        loop.thread_id = thread_id
-        loop._thread_type = "record"
+        loop.thread.id = thread_id
+        loop.thread.type = "record"
         loop.thread_store.set_active_thread(thread_id)
         loop._enter_record_mode()
         begin = {"role": "system", "content": f"[系统内部] thread_begin id={thread_id} type=record"}
-        pos = loop._current_turn_user_idx + 1
+        pos = loop.thread.current_turn_user_idx + 1
         loop.history.insert(pos, begin)
         guidance = {"role": "system", "content": "你正在记录一条新实验。优先收集材料、步骤、参数、结果。追问缺失的关键字段。目标：generate_record。"}
         loop.history.insert(pos + 1, guidance)
@@ -856,10 +264,10 @@ class ToolExecutor:
 
     def _end_thread(self, args: dict, loop: "AgentLoop") -> dict:
         """结束当前线程（record 或 analyze），归档并回到自由模式。"""
-        if not loop.thread_id:
+        if not loop.thread.id:
             return {"status": "no_active_thread",
                     "message": "当前没有活跃线程。"}
-        tid = loop.thread_id
+        tid = loop.thread.id
         loop._maybe_inject_thread_end("")
         return {"status": "ended", "thread_id": tid,
                 "message": f"线程 {tid} 已结束，回到自由模式。"}
@@ -870,18 +278,18 @@ class ToolExecutor:
         """开启跨实验分析线程。与 start_record_thread 对称。"""
         if not loop.thread_store:
             return {"error": "no_thread_store", "message": "线程存储未配置"}
-        if loop.thread_id:
-            if loop._thread_type == "record":
+        if loop.thread.id:
+            if loop.thread.type == "record":
                 return {"error": "in_record_thread",
                         "message": "当前在 record 线程中。如需分析，请在 record 线程中使用 analyze 工具，或结束 record 线程后再开启 analyze 线程。"}
-            if loop._thread_type == "analyze":
-                return {"status": "already_started", "thread_id": loop.thread_id}
+            if loop.thread.type == "analyze":
+                return {"status": "already_started", "thread_id": loop.thread.id}
         thread_id = loop.thread_store.next_id()
-        loop.thread_id = thread_id
-        loop._thread_type = "analyze"
+        loop.thread.id = thread_id
+        loop.thread.type = "analyze"
         loop.thread_store.set_active_thread(thread_id)
         begin = {"role": "system", "content": f"[系统内部] thread_begin id={thread_id} type=analyze"}
-        pos = loop._current_turn_user_idx + 1
+        pos = loop.thread.current_turn_user_idx + 1
         loop.history.insert(pos, begin)
         guidance = loop._build_thread_guidance("analyze")
         loop.history.insert(pos + 1, guidance)
@@ -897,6 +305,7 @@ class ToolExecutor:
         """返回选择面板数据，由前端渲染为实验勾选卡片。"""
         return {
             "display": "selector",
+            "pause": True,
             "title": args.get("title", "选择实验"),
             "items": args.get("candidates", []),
             "preselected": args.get("preselected", []),
@@ -912,41 +321,42 @@ class ToolExecutor:
             return {"error": "too_few_experiments",
                     "message": "至少需要2个实验才能分析。"}
         try:
-            summary = self.store.summarize_all(exp_ids=refs)
-            from lib.analyzer import analyze_experiments
-            analysis = analyze_experiments(summary, query, loop.llm)
-            # 写 AnalysisStore
-            anal_id = ""
-            if self.analysis_store:
-                anal_id = self.analysis_store.save({
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "question": query,
-                    "selected_ids": refs,
-                    "analysis": analysis,
-                })
-                # 写入实验反向关联 analyzed_in
-                for exp_id in refs:
-                    exp = self.store.load(exp_id)
-                    if exp:
-                        analyzed = exp.get("analyzed_in", [])
-                        if anal_id not in analyzed:
-                            analyzed.append(anal_id)
-                            exp["analyzed_in"] = analyzed
-                            self.store.save(exp)
-            # 提取标题：取第一段非空非标题行
-            title = query[:40]
-            for line in analysis.split("\n"):
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    title = line[:60]
-                    break
-            # 提取摘要：前200字非Markdown文本
-            plain = re.sub(r'[#*>`\-\[\]\(\)]', '', analysis)
-            plain = re.sub(r'\s+', ' ', plain).strip()
-            excerpt = plain[:200]
-            # 自动结束线程
-            tid = loop.thread_id
-            if tid and not loop._is_child_agent:
+            if loop.analysis_svc:
+                result = loop.analysis_svc.run_analysis(query, refs)
+                anal_id = result["anal_id"]
+                title = result["title"]
+                excerpt = result["analysis"][:200]
+            else:
+                summary = self.store.summarize_all(exp_ids=refs)
+                from lib.analyzer import analyze_experiments
+                analysis = analyze_experiments(summary, query, loop.llm)
+                anal_id = ""
+                if self.analysis_store:
+                    anal_id = self.analysis_store.save({
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "question": query,
+                        "selected_ids": refs,
+                        "analysis": analysis,
+                    })
+                    for exp_id in refs:
+                        exp = self.store.load(exp_id)
+                        if exp:
+                            analyzed = exp.get("analyzed_in", [])
+                            if anal_id not in analyzed:
+                                analyzed.append(anal_id)
+                                exp["analyzed_in"] = analyzed
+                                self.store.save(exp)
+                title = query[:40]
+                for line in analysis.split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        title = line[:60]
+                        break
+                plain = re.sub(r'[#*>`\-\[\]\(\)]', '', analysis)
+                plain = re.sub(r'\s+', ' ', plain).strip()
+                excerpt = plain[:200]
+            tid = loop.thread.id
+            if tid and not loop.child.is_child:
                 loop._maybe_inject_thread_end(anal_id)
             return {
                 "display": "analysis_done",
@@ -967,11 +377,11 @@ class ToolExecutor:
 
         # 从 thread 或 analysis_store 推断当前 anal_id
         anal_id = None
-        if loop._child_exp_id:
+        if loop.child.exp_id:
             # analysis child agent 通过 _child_exp_id 传递 anal_id
-            anal_id = loop._child_exp_id
-        elif loop.thread_store and loop.thread_id:
-            thread = loop.thread_store.load(loop.thread_id)
+            anal_id = loop.child.exp_id
+        elif loop.thread_store and loop.thread.id:
+            thread = loop.thread_store.load(loop.thread.id)
             if thread:
                 anal_id = thread.get("anal_generated", "")
 
@@ -1000,21 +410,25 @@ class ToolExecutor:
                 if len(merged_refs) < 2:
                     return {"error": "too_few_experiments",
                             "message": "合并后实验仍不足2个，无法分析。"}
-                summary = self.store.summarize_all(exp_ids=merged_refs)
-                from lib.analyzer import analyze_experiments
-                new_analysis = analyze_experiments(summary, a.get("question", ""), loop.llm)
-                a["analysis"] = new_analysis
-                a["selected_ids"] = merged_refs
-                self.analysis_store.save(a)
-                # 更新 analyzed_in 关联
-                for exp_id in additional_refs:
-                    exp = self.store.load(exp_id)
-                    if exp:
-                        analyzed = exp.get("analyzed_in", [])
-                        if anal_id not in analyzed:
-                            analyzed.append(anal_id)
-                            exp["analyzed_in"] = analyzed
-                            self.store.save(exp)
+                if loop.analysis_svc:
+                    result = loop.analysis_svc.run_analysis(a.get("question", ""), merged_refs)
+                    a["analysis"] = result["analysis"]
+                    a["selected_ids"] = merged_refs
+                    self.analysis_store.save(a)
+                else:
+                    summary = self.store.summarize_all(exp_ids=merged_refs)
+                    from lib.analyzer import analyze_experiments
+                    a["analysis"] = analyze_experiments(summary, a.get("question", ""), loop.llm)
+                    a["selected_ids"] = merged_refs
+                    self.analysis_store.save(a)
+                    for exp_id in additional_refs:
+                        exp = self.store.load(exp_id)
+                        if exp:
+                            analyzed = exp.get("analyzed_in", [])
+                            if anal_id not in analyzed:
+                                analyzed.append(anal_id)
+                                exp["analyzed_in"] = analyzed
+                                self.store.save(exp)
                 return {"status": "modified", "mode": "expand_refs",
                         "message": f"分析报告 {anal_id} 已更新，纳入 {len(merged_refs)} 个实验。"}
 
@@ -1049,13 +463,13 @@ class ToolExecutor:
     # -- ask_user（占位，实际由前端处理）--
 
     def _ask_user(self, args: dict, loop: "AgentLoop") -> dict:
-        return {"status": "asked"}
+        return {"status": "asked", "pause": True}
 
     # -- generate_record --
 
     def _generate_record(self, args: dict, loop: "AgentLoop") -> dict:
         # 子Agent 不允许 generate_record → 使用 modify_experiment 直接修改
-        if loop._is_child_agent:
+        if loop.child.is_child:
             return {"error": "use_modify_experiment",
                     "message": "子Agent请使用 modify_experiment 工具直接修改实验字段。修改会自动保存。"}
         if loop._schema_context is None:
@@ -1067,24 +481,27 @@ class ToolExecutor:
             result = parse_notes(notes, loop.llm)
             result["original_notes"] = notes
             # 子 Agent: 使用现有 EXP ID（修改已有实验）
-            if loop._is_child_agent and loop._child_exp_id:
-                result["id"] = loop._child_exp_id
+            if loop.child.is_child and loop.child.exp_id:
+                result["id"] = loop.child.exp_id
             else:
                 result["id"] = loop.store.next_id()
             result["references"] = list(loop.references)
             loop._generated_preview = result
             loop._generated_notes = notes
-            return {"status": "generated", "id": result["id"],
+            return {"status": "generated", "pause": True,
+                    "response_type": "generate", "include_state": True,
+                    "id": result["id"],
                     "title": result.get("title", ""),
                     "fields_count": sum(1 for v in result.values() if v)}
         except Exception:
             preview = _fallback_preview(loop)
             # 子 Agent 回退也使用现有 EXP ID
-            if loop._is_child_agent and loop._child_exp_id:
-                preview["id"] = loop._child_exp_id
+            if loop.child.is_child and loop.child.exp_id:
+                preview["id"] = loop.child.exp_id
             loop._generated_preview = preview
             loop._generated_notes = notes
-            return {"status": "generated",
+            return {"status": "generated", "pause": True,
+                    "response_type": "generate", "include_state": True,
                     "id": preview["id"],
                     "title": preview.get("title", ""),
                     "note": "使用了确定性回退，部分字段可能需手动补全"}
@@ -1132,22 +549,13 @@ class ToolExecutor:
                 else:
                     exp[key] = value
             # 写更新日志
-            from lib.storage import UpdateLogStore
-            entries = []
-            for key, value in changes.items():
-                old_val = old_exp.get(key)
-                new_val = value
-                if str(old_val)[:200] != str(new_val)[:200]:
-                    entries.append({
-                        "path": key, "field": key,
-                        "old": str(old_val)[:200] if old_val else "",
-                        "new": str(new_val)[:200] if new_val else "",
-                    })
+            from lib.services.experiment import compute_experiment_diff
+            entries = compute_experiment_diff(old_exp, exp)
             if entries and self.update_log_store:
                 self.update_log_store.append(
                     exp_id=ref, source="parent_agent",
                     changes=entries,
-                    thread_id=loop.thread_id,
+                    thread_id=loop.thread.id,
                     context={"summary": f"修改了 {len(entries)} 个字段"},
                 )
             # 保存
@@ -1517,14 +925,14 @@ class ToolExecutor:
                     break
 
         # 如果当前在 analyze 线程中，先结束它再开始 record
-        if loop.thread_id:
+        if loop.thread.id:
             for m in loop.history:
-                if f"thread_begin id={loop.thread_id} type=analyze" in (m.get("content") or ""):
+                if f"thread_begin id={loop.thread.id} type=analyze" in (m.get("content") or ""):
                     loop.history.append({"role": "system",
-                        "content": f"[系统内部] thread_end id={loop.thread_id}"})
+                        "content": f"[系统内部] thread_end id={loop.thread.id}"})
                     loop.thread_store.set_active_thread(None)
-                    loop.thread_id = None
-                    loop._thread_type = None
+                    loop.thread.id = None
+                    loop.thread.type = None
                     break
 
         # 生成 Schema 状态并注入 messages
@@ -1549,7 +957,8 @@ class AgentLoop:
 
     def __init__(self, llm_client, experiment_store, debug_dir: str | Path | None = None,
                  thread_store=None, update_log_store=None,
-                 favorites_store=None, analysis_store=None):
+                 favorites_store=None, analysis_store=None,
+                 analysis_svc=None, extraction_svc=None):
         self.llm = llm_client
         self.store = experiment_store
         self._schema_context = None  # 16-field dict — only non-None in record mode
@@ -1564,22 +973,16 @@ class AgentLoop:
         self._generated_notes = None
         self._llm_call_seq = 0      # LLM 调用全局序号（跨 turn 递增）
 
-        # 线程系统
+        # 线程系统 + 子Agent 标记 + 服务引用
         self.thread_store = thread_store
         self.update_log_store = update_log_store
-        self.thread_id = None                    # 当前 active 线程 ID
-        self._thread_type = None                 # "record" | "analyze" | None（前端颜色指示）
-        self._pending_thread_start = None        # "record" 或 "analyze"，或 None
-        self._current_turn_user_idx = -1         # 本轮 user 消息在 history 中的索引
-        self.modified_values = {}                # {field: old_value_before_first_touch}
-        self._last_ended_thread_id = None         # 刚结束的线程ID（压缩跳过用）
-        self._last_summarized_idx = 0             # 上次摘要覆盖到的 history 索引
-        self._l0_generated_at = None             # L0 最后生成时间
-        self._is_child_agent = False             # 是否子 Agent 实例
-        self._is_legacy = False                  # 是否旧实验（无线程）
-        self._child_exp_id = None                # 子 Agent 修改的目标 EXP ID
-        self._child_initial_history_len = 0      # 子 Agent 初始 history 长度（前端只渲染此后的消息）
-        self._child_agent_role = None            # "exp_editor" | "analysis_reviewer" | None
+        self.thread = ThreadState()
+        self.child = ChildContext()
+        self.modified_values = {}
+        self._last_summarized_idx = 0
+        self._l0_generated_at = None
+        self.analysis_svc = analysis_svc
+        self.extraction_svc = extraction_svc
 
         # 注入 L0 全局摘要（实验库概况、常用标签等）
         if thread_store:
@@ -1604,9 +1007,9 @@ class AgentLoop:
     @property
     def mode(self) -> str:
         """当前对话模式: 'general' | 'record' | 'analyze'"""
-        if not self.thread_id:
+        if not self.thread.id:
             return "general"
-        return self._thread_type or "general"
+        return self.thread.type or "general"
 
     def _enter_record_mode(self) -> None:
         """初始化 Schema 上下文（仅 record 模式）。"""
@@ -1619,13 +1022,13 @@ class AgentLoop:
     def _get_active_tools(self) -> list[dict]:
         """返回当前模式或子 Agent 角色可用的工具列表。"""
         # 子 Agent 角色优先 —— 返回固定工具清单，不走 mode 推断
-        if self._child_agent_role == "analysis_reviewer":
+        if self.child.agent_role == "analysis_reviewer":
             return [
                 TOOL_LOAD_REFERENCE, TOOL_SEARCH_EXPERIMENTS,
                 TOOL_QUERY_EXPERIMENT, TOOL_LIST_EXPERIMENTS,
                 TOOL_READ_UPDATE_LOG, TOOL_MODIFY_ANALYSIS, TOOL_END_THREAD,
             ]
-        if self._child_agent_role == "exp_editor":
+        if self.child.agent_role == "exp_editor":
             return [
                 TOOL_LOAD_REFERENCE, TOOL_SEARCH_EXPERIMENTS,
                 TOOL_QUERY_EXPERIMENT, TOOL_LIST_EXPERIMENTS,
@@ -1656,12 +1059,12 @@ class AgentLoop:
         """处理一条用户消息。返回 {type, message?, context}"""
         log = get_logger()
         if user_message:
-            self._current_turn_user_idx = len(self.history)
+            self.thread.current_turn_user_idx = len(self.history)
             self.history.append({"role": "user", "content": user_message})
             self.turn_count += 1
             if log:
-                agent = "child" if self._is_child_agent else "parent"
-                log.agent(agent, "user", user_message, exp=self._child_exp_id)
+                agent = "child" if self.child.is_child else "parent"
+                log.agent(agent, "user", user_message, exp=self.child.exp_id)
 
         consecutive_errors = 0
         last_tool = None
@@ -1672,7 +1075,7 @@ class AgentLoop:
 
             # 构建 LLM 消息：静态 Prompt → 持久层 history → 请求层状态
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_prompt()},
             ]
             split = self._last_summarized_idx or 0
             if split > 0 and self.thread_store:
@@ -1695,47 +1098,47 @@ class AgentLoop:
             # ---- 日志: LLM 请求 ----
             self._log_llm_request(seq, messages)
 
-            response = self.llm.client.chat.completions.create(
-                model=self.llm.model,
+            response = self.llm.chat(
                 messages=messages,
                 tools=self._get_active_tools(),
                 temperature=0.3,
                 reasoning_effort="max",
             )
-            msg = response.choices[0].message
-            _reasoning = getattr(msg, "reasoning_content", None) or ""
+            resp_content = response.content
+            resp_tool_calls = response.tool_calls
+            _reasoning = response.reasoning
 
             # ---- 日志: LLM 响应 ----
-            self._log_llm_response(seq, msg, _reasoning)
+            self._log_llm_response(seq, response, _reasoning)
 
             # 纯文本 → 不再调工具，直接返回
-            if msg.content and not msg.tool_calls:
-                entry = {"role": "assistant", "content": msg.content}
+            if resp_content and not resp_tool_calls:
+                entry = {"role": "assistant", "content": resp_content}
                 if _reasoning:
                     entry["reasoning_content"] = _reasoning
                 self.history.append(entry)
                 if log:
-                    agent = "child" if self._is_child_agent else "parent"
-                    log.agent(agent, "assistant", msg.content, exp=self._child_exp_id)
+                    agent = "child" if self.child.is_child else "parent"
+                    log.agent(agent, "assistant", resp_content, exp=self.child.exp_id)
                 self._maybe_inject_thread_start()   # return 前检查
                 self._check_thread_cancellation(_no_progress_count)
                 self._save_runtime_state()
-                return {"type": "reply", "message": msg.content,
+                return {"type": "reply", "message": resp_content,
                         "context": self._schema_context}
 
             # 调用了工具
             # 记录 assistant 文本（工具调用前的说明文字，只记一次）
-            if log and msg.content:
-                ag = "child" if self._is_child_agent else "parent"
-                tc_names = [tc.function.name for tc in (msg.tool_calls or [])]
-                log.agent(ag, "assistant", msg.content, tool_calls=tc_names, exp=self._child_exp_id)
+            if log and resp_content:
+                ag = "child" if self.child.is_child else "parent"
+                tc_names = [tc["function"]["name"] for tc in (resp_tool_calls or [])]
+                log.agent(ag, "assistant", resp_content, tool_calls=tc_names, exp=self.child.exp_id)
 
             has_record_tool = False
-            for tc in (msg.tool_calls or []):
-                name = tc.function.name
+            for tc in (resp_tool_calls or []):
+                name = tc["function"]["name"]
                 if name in ("update_schema", "analyze"):
                     has_record_tool = True
-                raw_args_str = tc.function.arguments
+                raw_args_str = tc["function"]["arguments"]
 
                 # ---- 日志: tool 调用入参 ----
                 self._log_tool_call(seq, name, raw_args_str)
@@ -1748,14 +1151,14 @@ class AgentLoop:
 
                 # 统一日志系统：记录工具调用
                 if log:
-                    ag = "child" if self._is_child_agent else "parent"
+                    ag = "child" if self.child.is_child else "parent"
                     ok = "error" not in result
                     kw = _tool_log_summary(name, args, result)
-                    log.tool(ag, name, ok, exp=self._child_exp_id, **kw)
+                    log.tool(ag, name, ok, exp=self.child.exp_id, **kw)
 
-                # 将 API 工具调用对象转为可序列化的 dict
+                # 将工具调用转为可序列化的 dict
                 tc_dict = {
-                    "id": tc.id,
+                    "id": tc["id"],
                     "type": "function",
                     "function": {
                         "name": name,
@@ -1764,14 +1167,14 @@ class AgentLoop:
                 }
                 entry = {
                     "role": "assistant",
-                    "content": msg.content or None,
+                    "content": resp_content or None,
                     "tool_calls": [tc_dict],
                 }
                 if _reasoning:
                     entry["reasoning_content"] = _reasoning
                 self.history.append(entry)
                 self.history.append({
-                    "role": "tool", "tool_call_id": tc.id,
+                    "role": "tool", "tool_call_id": tc["id"],
                     "content": json.dumps(result, ensure_ascii=False),
                 })
 
@@ -1796,51 +1199,42 @@ class AgentLoop:
                     consecutive_errors = 0
                     last_tool = None
 
-                # ask_user 暂停循环
-                if name == "ask_user":
+                # 统一暂停检查：工具返回 pause 标记时停止循环
+                if result.get("pause"):
                     self._maybe_inject_thread_start()
-                    if not has_record_tool and self.thread_id:
+                    if not has_record_tool and self.thread.id:
                         _no_progress_count += 1
                     self._check_thread_cancellation(_no_progress_count)
-                    self._save_runtime_state()
-                    questions = "\n".join(
-                        f"{i+1}. {q}" for i, q in enumerate(args.get("questions", []))
-                    )
-                    if msg.content:
-                        questions = msg.content + "\n\n" + questions
-                    return {"type": "reply",
-                            "message": questions,
-                            "context": self._schema_context}
 
-                # select_experiments 暂停循环，等用户勾选确认
-                if name == "select_experiments":
-                    self._maybe_inject_thread_start()
-                    self._save_runtime_state()
-                    return {"type": "reply",
-                            "message": msg.content or "请在面板中选择实验。",
-                            "context": self._schema_context}
-
-                # generate_record → 生成实验记录，停止循环
-                if name == "generate_record":
-                    self._maybe_inject_thread_start()
-                    # 子 Agent 不结束线程：线程由父 Agent 创建和结束，子 Agent 复用 thread_id
-                    if self.thread_id and not self._is_child_agent:
-                        exp_id = self._generated_preview.get("id", "") if self._generated_preview else ""
-                        self._maybe_inject_thread_end(exp_id)
+                    if name == "generate_record":
+                        if self.thread.id and not self.child.is_child:
+                            exp_id = self._generated_preview.get("id", "") if self._generated_preview else ""
+                            self._maybe_inject_thread_end(exp_id)
+                        if self._generated_preview is None:
+                            return {"type": "reply",
+                                    "message": "生成失败，请重试或补充更多信息。",
+                                    "context": self._schema_context}
                         self._save_runtime_state()
-                    if self._generated_preview is None:
-                        return {"type": "reply",
-                                "message": "生成失败，请重试或补充更多信息。",
+                        return {"type": result.get("response_type", "generate"),
+                                "message": "实验记录已生成，请在预览中确认。",
+                                "state": self.state_to_dict() if result.get("include_state") else None,
+                                "preview": self._generated_preview,
+                                "notes": self._generated_notes,
                                 "context": self._schema_context}
-                    return {"type": "generate",
-                            "message": "实验记录已生成，请在预览中确认。",
-                            "state": self.state_to_dict(),
-                            "preview": self._generated_preview,
-                            "notes": self._generated_notes,
+
+                    self._save_runtime_state()
+                    message = result.get("message") or resp_content or ""
+                    if name == "ask_user":
+                        questions = "\n".join(
+                            f"{i+1}. {q}" for i, q in enumerate(args.get("questions", []))
+                        )
+                        message = (resp_content + "\n\n" + questions) if resp_content else questions
+                    return {"type": "reply",
+                            "message": message or "请在面板中选择实验。",
                             "context": self._schema_context}
 
             # 更新无进展计数
-            if not has_record_tool and self.thread_id:
+            if not has_record_tool and self.thread.id:
                 _no_progress_count += 1
             else:
                 _no_progress_count = 0
@@ -2010,7 +1404,7 @@ class AgentLoop:
     def _build_thread_status(self) -> str:
         """生成当前线程状态声明。每轮 LLM 请求注入，不入 history。"""
         # 子 Agent 角色覆盖 —— 不依赖 _thread_type
-        if self._child_agent_role == "analysis_reviewer":
+        if self.child.agent_role == "analysis_reviewer":
             return (
                 "[系统状态] 你正在审阅/修改一份已完成的分析报告。"
                 "可用工具：load_reference（查看报告中引用的实验）、search_experiments、"
@@ -2018,7 +1412,7 @@ class AgentLoop:
                 "不要使用 start_analyze_thread、select_experiments、generate_analysis"
                 "——这些属于分析创建阶段，不是报告审阅阶段。"
             )
-        if self._child_agent_role == "exp_editor":
+        if self.child.agent_role == "exp_editor":
             return (
                 "[系统状态] 你正在修改已完成的实验。"
                 "修改前先用 load_reference 加载磁盘最新数据（不要依赖对话记忆）。"
@@ -2026,19 +1420,19 @@ class AgentLoop:
                 "不要用 update_schema 或 generate_record。"
             )
 
-        if not self.thread_id:
+        if not self.thread.id:
             return (
                 "[系统状态] 自由模式。"
                 "你可回答查询、管理收藏、闲聊。"
                 "用户要记录新实验时调用 start_record_thread，"
                 "要跨实验分析时调用 start_analyze_thread。"
             )
-        if self._thread_type == "record":
+        if self.thread.type == "record":
             return (
                 "[系统状态] record 线程进行中。"
                 "持续收集实验信息，缺失关键字段时追问。目标：generate_record。"
             )
-        if self._thread_type == "analyze":
+        if self.thread.type == "analyze":
             return (
                 "[系统状态] analyze 线程进行中。"
                 "深入讨论，使用 search_experiments + load_reference + 自身推理。"
@@ -2048,18 +1442,18 @@ class AgentLoop:
 
     def _maybe_inject_thread_start(self) -> None:
         """analyze 工具触发时注入线程标记。record 线程由 start_record_thread 工具直接处理。"""
-        if not self._pending_thread_start or not self.thread_store:
+        if not self.thread.pending_start or not self.thread_store:
             return
-        thread_type = self._pending_thread_start
-        self._pending_thread_start = None
+        thread_type = self.thread.pending_start
+        self.thread.pending_start = None
         thread_id = self.thread_store.next_id()
-        self.thread_id = thread_id
-        self._thread_type = thread_type
+        self.thread.id = thread_id
+        self.thread.type = thread_type
         self.thread_store.set_active_thread(thread_id)
         if thread_type == "record":
             self._enter_record_mode()
         begin = {"role": "system", "content": f"[系统内部] thread_begin id={thread_id} type={thread_type}"}
-        insert_pos = self._current_turn_user_idx + 1
+        insert_pos = self.thread.current_turn_user_idx + 1
         self.history.insert(insert_pos, begin)
         guidance = self._build_thread_guidance(thread_type)
         if guidance.get("content"):
@@ -2071,22 +1465,22 @@ class AgentLoop:
 
     def _maybe_inject_thread_end(self, produced_id: str) -> None:
         """注入线程结束标记 + 提取 messages → 写线程文件 + 更新索引 + 重置上下文。"""
-        if not self.thread_id or not self.thread_store:
+        if not self.thread.id or not self.thread_store:
             return
         end = {"role": "system",
-               "content": f"[系统内部] thread_end id={self.thread_id} product={produced_id}"}
+               "content": f"[系统内部] thread_end id={self.thread.id} product={produced_id}"}
         self.history.append(end)
         self._extract_and_save_thread(produced_id)
         self.thread_store.set_active_thread(None)
         # 统一日志
         log = get_logger()
         if log:
-            agent = "child" if self._is_child_agent else "parent"
-            log.operation("thread_end", agent=agent, thread=self.thread_id, produced=produced_id)
+            agent = "child" if self.child.is_child else "parent"
+            log.operation("thread_end", agent=agent, thread=self.thread.id, produced=produced_id)
         # 记录刚结束的线程ID，压缩时跳过它
-        self._last_ended_thread_id = self.thread_id
-        self.thread_id = None
-        self._thread_type = None
+        self.thread.last_ended_id = self.thread.id
+        self.thread.id = None
+        self.thread.type = None
         # 清理 Schema 状态和引用
         self._exit_record_mode()
         self.references = []
@@ -2095,7 +1489,7 @@ class AgentLoop:
 
     def _extract_and_save_thread(self, produced_id: str) -> None:
         """提取 begin-end 标记间的 messages → 写入线程文件 + 更新索引。"""
-        tid = self.thread_id
+        tid = self.thread.id
         # 找到 begin 标记位置
         begin_idx = None
         end_idx = None
@@ -2140,12 +1534,12 @@ class AgentLoop:
 
     def _check_thread_cancellation(self, consecutive_no_progress: int) -> None:
         """检测线程是否需要取消。返回更新后的 consecutive_no_progress。"""
-        if not self.thread_id:
+        if not self.thread.id:
             return
         # 简单实现：如果连续 3 轮无进展，自动取消
         # 注意：调用方负责维护 consecutive_no_progress 计数
         if consecutive_no_progress >= 3:
-            tid = self.thread_id
+            tid = self.thread.id
             self.history.append({"role": "system",
                 "content": f"[系统内部] thread_cancelled id={tid}"})
             # 移除 begin 标记
@@ -2158,13 +1552,13 @@ class AgentLoop:
                         if "正在记录" in content or "正在进行" in content:
                             self.history.pop(i)
                     break
-            self.thread_id = None
-            self._thread_type = None
+            self.thread.id = None
+            self.thread.type = None
             self._exit_record_mode()
             self.modified_values = {}
             log = get_logger()
             if log:
-                agent = "child" if self._is_child_agent else "parent"
+                agent = "child" if self.child.is_child else "parent"
                 log.operation("thread_cancelled", agent=agent, thread=tid)
 
     # -- 子 Agent --
@@ -2191,11 +1585,10 @@ class AgentLoop:
             if m.get("role") != "system" or "[全局上下文]" not in (m.get("content") or ""):
                 child.history.append(dict(m))
         # 记录初始 history 长度——前端只渲染此索引之后的消息
-        child._child_initial_history_len = len(child.history)
-        child.thread_id = thread_id
-        child._is_child_agent = True
-        child._child_agent_role = "exp_editor"
-        child._parent_thread_store = parent_loop.thread_store
+        child.child.initial_history_len = len(child.history)
+        child.thread.id = thread_id
+        child.child.is_child = True
+        child.child.agent_role = "exp_editor"
         return child
 
     @classmethod
@@ -2214,10 +1607,9 @@ class AgentLoop:
             "role": "system",
             "content": f"[当前实验数据]\n{json.dumps(exp_data, ensure_ascii=False, indent=2)}"
         })
-        child._is_child_agent = True
-        child._is_legacy = True
-        child._child_agent_role = "exp_editor"
-        child._parent_thread_store = thread_store
+        child.child.is_child = True
+        child.child.is_legacy = True
+        child.child.agent_role = "exp_editor"
         return child
 
     # -- 调试日志: LLM 请求 --
@@ -2247,24 +1639,16 @@ class AgentLoop:
         except Exception:
             print(f"[DEBUG] _log_llm_request failed: {sys.exc_info()[1]}", file=sys.stderr)
 
-    def _log_llm_response(self, seq: int, msg, reasoning: str = "") -> None:
+    def _log_llm_response(self, seq: int, response, reasoning: str = "") -> None:
         """保存 LLM 的原始响应（含 content、reasoning_content 和 tool_calls）"""
         try:
             data = {}
             if reasoning:
                 data["reasoning_content"] = reasoning[:3000]
-            if msg.content:
-                data["content"] = msg.content[:3000]
-            if msg.tool_calls:
-                data["tool_calls"] = []
-                for tc in msg.tool_calls:
-                    data["tool_calls"].append({
-                        "id": tc.id,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    })
+            if response.content:
+                data["content"] = response.content[:3000]
+            if response.tool_calls:
+                data["tool_calls"] = response.tool_calls  # already dict format
             if not data:
                 data["content"] = "(empty response)"
             filepath = self.debug_dir / f"call_{seq:03d}_response.json"
@@ -2302,9 +1686,9 @@ class AgentLoop:
         if not self.thread_store:
             return
         try:
-            if self._is_child_agent:
+            if self.child.is_child:
                 # 子 Agent: 写独立 child_state.yaml，绝不覆盖父 Agent 的 _current_state.yaml
-                key = self.thread_id or self._child_exp_id
+                key = self.thread.id or self.child.exp_id
                 if key:
                     self.thread_store.save_child_state(key, self.state_to_dict())
             else:
@@ -2313,7 +1697,7 @@ class AgentLoop:
         except Exception:
             pass
         # 子 Agent 不触发摘要
-        if not self._is_child_agent:
+        if not self.child.is_child:
             self._maybe_summarize()
 
     # -- 上下文窗口管理 --
@@ -2356,7 +1740,7 @@ class AgentLoop:
         combined = f"{prev}\n\n---\n\n{new_summary}" if prev else new_summary
         self._last_summarized_idx = start + len(to_summarize)
         self.thread_store.update_global_context(combined,
-            uncompressed_thread_ids=[self.thread_id] if self.thread_id else [])
+            uncompressed_thread_ids=[self.thread.id] if self.thread.id else [])
 
     # -- 状态序列化 --
 
@@ -2372,27 +1756,29 @@ class AgentLoop:
                 for m in self.history
             ],
             "debug_dir": str(self.debug_dir),
-            "thread_id": self.thread_id,
-            "_thread_type": self._thread_type,
-            "_pending_thread_start": self._pending_thread_start,
-            "_current_turn_user_idx": self._current_turn_user_idx,
+            "thread_id": self.thread.id,
+            "_thread_type": self.thread.type,
+            "_pending_thread_start": self.thread.pending_start,
+            "_current_turn_user_idx": self.thread.current_turn_user_idx,
             "modified_values": dict(self.modified_values),
             "_l0_generated_at": str(self._l0_generated_at) if self._l0_generated_at else None,
             "_last_summarized_idx": self._last_summarized_idx,
-            "_is_child_agent": self._is_child_agent,
-            "_is_legacy": self._is_legacy,
-            "_child_exp_id": self._child_exp_id,
-            "_child_initial_history_len": self._child_initial_history_len,
-            "_child_agent_role": self._child_agent_role,
+            "_is_child_agent": self.child.is_child,
+            "_is_legacy": self.child.is_legacy,
+            "_child_exp_id": self.child.exp_id,
+            "_child_initial_history_len": self.child.initial_history_len,
+            "_child_agent_role": self.child.agent_role,
         }
 
     @classmethod
     def from_dict(cls, llm_client, store, data: dict,
                   thread_store=None, update_log_store=None,
-                  favorites_store=None, analysis_store=None) -> "AgentLoop":
+                  favorites_store=None, analysis_store=None,
+                  analysis_svc=None, extraction_svc=None) -> "AgentLoop":
         loop = cls(llm_client, store, debug_dir=data.get("debug_dir") or None,
                    thread_store=thread_store, update_log_store=update_log_store,
-                   favorites_store=favorites_store, analysis_store=analysis_store)
+                   favorites_store=favorites_store, analysis_store=analysis_store,
+                   analysis_svc=analysis_svc, extraction_svc=extraction_svc)
         # 向后兼容：旧的 context 可能为空 dict（不是 None），按 None 处理
         ctx = data.get("context")
         if ctx and any(_is_filled(v) for v in ctx.values()):
@@ -2404,24 +1790,24 @@ class AgentLoop:
         loop.turn_count = data.get("turn_count", 0)
         loop._llm_call_seq = data.get("llm_call_seq", 0)
         loop.history = data.get("history", [])
-        loop.thread_id = data.get("thread_id")
-        loop._thread_type = data.get("_thread_type")
+        loop.thread.id = data.get("thread_id")
+        loop.thread.type = data.get("_thread_type")
         # 验证磁盘上线程是否仍活跃（可能已被其他进程或手动操作结束）
-        if loop.thread_id and thread_store:
-            thread = thread_store.load(loop.thread_id)
+        if loop.thread.id and thread_store:
+            thread = thread_store.load(loop.thread.id)
             if not thread or thread.get("status") != "active":
-                loop.thread_id = None
-                loop._thread_type = None
-        loop._pending_thread_start = data.get("_pending_thread_start")
-        loop._current_turn_user_idx = data.get("_current_turn_user_idx", -1)
+                loop.thread.id = None
+                loop.thread.type = None
+        loop.thread.pending_start = data.get("_pending_thread_start")
+        loop.thread.current_turn_user_idx = data.get("_current_turn_user_idx", -1)
         loop.modified_values = data.get("modified_values", {})
         loop._l0_generated_at = data.get("_l0_generated_at")
         loop._last_summarized_idx = data.get("_last_summarized_idx", 0)
-        loop._is_child_agent = data.get("_is_child_agent", False)
-        loop._is_legacy = data.get("_is_legacy", False)
-        loop._child_exp_id = data.get("_child_exp_id")
-        loop._child_initial_history_len = data.get("_child_initial_history_len", 0)
-        loop._child_agent_role = data.get("_child_agent_role")
+        loop.child.is_child = data.get("_is_child_agent", False)
+        loop.child.is_legacy = data.get("_is_legacy", False)
+        loop.child.exp_id = data.get("_child_exp_id")
+        loop.child.initial_history_len = data.get("_child_initial_history_len", 0)
+        loop.child.agent_role = data.get("_child_agent_role")
 
         # L0 摘要超过 1 小时 → 重新生成
         if thread_store and loop._l0_stale():

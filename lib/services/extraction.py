@@ -1,8 +1,47 @@
+"""自然语言提取服务。吸收 lib/parser.py 的 parse_notes() 和 strip_html()。"""
+
 import re
 from datetime import datetime
 from lib.core.schema import EXPERIMENT_SCHEMA
 
-SYSTEM_PROMPT = """You are an expert materials science research assistant specialized in
+
+class ExtractionService:
+    def __init__(self, extract_llm):
+        self.extract_llm = extract_llm
+
+    def parse_notes(self, notes: str) -> dict:
+        """自然语言 → 结构化 dict。"""
+        user_prompt = f"""Extract the following experiment notes into a structured record:
+
+---BEGIN NOTES---
+{notes}
+---END NOTES---
+
+If the notes are in Chinese, extract in Chinese but keep section keys in English.
+If the notes mention experiment IDs or dates, preserve them exactly.
+If the notes mention file paths or sample IDs, preserve them exactly.
+"""
+        result = self.extract_llm.structured_extract(
+            prompt=user_prompt,
+            system_prompt=_EXTRACTION_SYSTEM_PROMPT,
+            output_schema=EXPERIMENT_SCHEMA
+        )
+        if not result.get("date"):
+            result["date"] = datetime.now().strftime("%Y-%m-%d")
+        result["original_notes"] = notes.strip()
+        return result
+
+    @staticmethod
+    def strip_html(html_text: str) -> str:
+        """Convert rich HTML notes to plain text for AI extraction."""
+        text = re.sub(r'<img[^>]*>', '', html_text)
+        text = re.sub(r'</?(p|div|br|li|h\d|tr)[^>]*>', '\n', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
+
+
+_EXTRACTION_SYSTEM_PROMPT = """You are an expert materials science research assistant specialized in
 extracting structured experiment records from free-form laboratory notes.
 
 Your task: Given the user's informal experiment notes, extract all available
@@ -41,40 +80,3 @@ EXTRACTION RULES:
 12. If the notes mention sample IDs, file paths, or equipment IDs, preserve them exactly.
 13. For the `date` field: use the date mentioned in notes, or today's date as default.
 """
-
-# EXPERIMENT_SCHEMA migrated to lib/core/schema.py
-
-
-def strip_html(html_text: str) -> str:
-    """Convert rich HTML notes to plain text for AI extraction."""
-    text = re.sub(r'<img[^>]*>', '', html_text)
-    text = re.sub(r'</?(p|div|br|li|h\d|tr)[^>]*>', '\n', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
-def parse_notes(notes: str, llm_client) -> dict:
-    """Convert free-form experiment notes into structured YAML-ready dict."""
-    user_prompt = f"""Extract the following experiment notes into a structured record:
-
----BEGIN NOTES---
-{notes}
----END NOTES---
-
-If the notes are in Chinese, extract in Chinese but keep section keys in English.
-If the notes mention experiment IDs or dates, preserve them exactly.
-If the notes mention file paths or sample IDs, preserve them exactly.
-"""
-
-    result = llm_client.structured_extract(
-        prompt=user_prompt,
-        system_prompt=SYSTEM_PROMPT,
-        output_schema=EXPERIMENT_SCHEMA
-    )
-    # Ensure date defaults to today if empty
-    if not result.get("date"):
-        result["date"] = datetime.now().strftime("%Y-%m-%d")
-    # Preserve the original free-form notes for later reference and re-generation
-    result["original_notes"] = notes.strip()
-    return result

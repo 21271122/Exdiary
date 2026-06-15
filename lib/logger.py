@@ -52,12 +52,12 @@ class ExdiaryLogger:
         """从 AgentLoop 实例推断 agent 类型。"""
         if loop is None:
             return "?"
-        return "child" if loop._is_child_agent else "parent"
+        return "child" if loop.child.is_child else "parent"
 
     def _agent_exp(self, loop) -> str | None:
         if loop is None:
             return None
-        return loop._child_exp_id if loop._is_child_agent else None
+        return loop.child.exp_id if loop.child.is_child else None
 
     # -- agent.log --
 
