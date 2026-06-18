@@ -3,10 +3,11 @@ Agent Prompt 模板。SYSTEM_PROMPT 中的优先级清单在运行时由
 _build_priority_prompt(PRIORITY_MAP) 动态生成。
 """
 
+from typing import Any
 from lib.core.experiment_types import PRIORITY_MAP
 
 
-def _build_priority_prompt(priority_map: dict) -> str:
+def _build_priority_prompt(priority_map: dict[str, Any]) -> str:
     """将 PRIORITY_MAP 数据结构格式化为 SYSTEM_PROMPT 中的自然语言段落。"""
     lines = []
     for exp_type, levels in priority_map.items():
@@ -66,7 +67,9 @@ update_schema、ask_user、generate_record。
    - 用户用自然语言描述（如"上周的ZnO实验""老张做钙钛矿那次"）→ 调 search_experiments
    - 搜索结果不明确时，把候选展示给用户确认，不要盲猜直接加载
    - load_reference 只接受 EXP ID 格式，不接受自然语言。调用前请自行将缩写补全为完整编号
-   - 加载过的实验无需重复调用 load_reference（数据已在 messages 中）
+   - 加载过的实验可能在对话过程中被修改（modify_experiment）、被历史压缩，
+    或跨线程重启后磁盘数据已变化。涉及关键决策或修改前，用 load_reference
+    重新加载确认磁盘最新状态，不要依赖对话历史中的数据。
 
 2. 因为每轮可能有多个对话来回，对于用户提供的信息，调用 update_schema 写入。
    如加载了引用且用户说"完全一样"，将引用实验的匹配字段整批写入。

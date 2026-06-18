@@ -228,7 +228,6 @@
 .ref-result-row .ref-title { font-size: 0.85rem; flex: 1; font-weight: 600; }
 </style>
 
-{% include '_selector_styles.html' %}
 {% include '_selector_scripts.html' %}
 
 <script>
@@ -383,7 +382,7 @@ async function sendMessage() {
     updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
-    if (data.type === 'saved' && data.exp_id) { navigateToPage('/experiments/' + data.exp_id); return; }
+    if (data.type === 'saved' && data.exp_id) { return; }
   } catch(e) {
     _sending = false;
     document.getElementById('btn-send').disabled = false;
@@ -515,6 +514,11 @@ function renderToolResult(content, toolName, toolCallId) {
       html = '<div class="tool-card report-card"><div class="tc-header">Analysis Complete</div>';
       html += '<div class="tc-body"><strong>'+escHtml(r.anal_id||'')+'</strong> &mdash; '+escHtml(r.title||'')+'</div>';
       html += '<div class="tc-footer"><a href="/analysis/'+escHtml(r.anal_id||'')+'">View Report &rarr;</a></div></div>'; break;
+    case 'record_generated':
+      html = '<div class="tool-card record-card"><div class="tc-header">Experiment Generated</div>';
+      html += '<div class="tc-body"><strong>'+escHtml(r.exp_id||'')+'</strong> &mdash; '+escHtml(r.title||'')+'</div>';
+      if (r.summary) html += '<div class="tc-body"><small>'+escHtml(r.summary)+'</small></div>';
+      html += '<div class="tc-footer"><a href="/experiments/'+escHtml(r.exp_id||'')+'">View Experiment &rarr;</a></div></div>'; break;
     case 'toast': showToast(r.message); return;
     case 'list':
       html = '<div class="tool-card list-card"><div class="tc-header">Found '+(r.count||0)+' experiments</div><div class="tc-body">';

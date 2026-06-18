@@ -63,6 +63,10 @@ TOOL_UPDATE_SCHEMA = {
             "将本轮确认的信息写入Schema。写入后系统自动更新messages中的Schema状态摘要。"
             "注意: messages中已有当前Schema状态和引用实验数据，写入前请自行比对——"
             "新值与已有数据矛盾时，先向用户求证再写入，不要写入矛盾值后又覆盖。"
+            "重要: generate_record 不会对字段值做二次 LLM 提取——它依赖你通过 update_schema 写入的数据质量。"
+            "对数组字段(sop/tags/materials等)，如需整体替换或插入修正，先传[]清空再传完整列表: "
+            "例如先 update_schema(sop:[]) 清空，再 update_schema(sop:[...完整步骤]) 写入正确顺序。"
+            "嵌套对象(results/observations)必须传完整结构(含所有子字段)，不要只传部分子字段。"
         ),
         "parameters": {
             "type": "object",

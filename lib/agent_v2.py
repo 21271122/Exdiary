@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
+from lib.llm import LLMResponse
 from lib.logger import get_logger
 from lib.core.agent_tools import (
     TOOL_LOAD_REFERENCE, TOOL_SEARCH_EXPERIMENTS, TOOL_UPDATE_SCHEMA,
@@ -20,6 +21,21 @@ from lib.core.agent_tools import (
 )
 from lib.core.prompts import build_system_prompt
 from lib.core.schema import DEFAULT_CONTEXT
+
+
+def _cleanup_old_debug_dirs(debug_root: Path, max_age_days: int = 30) -> None:
+    """删除超过 max_age_days 天的旧调试目录。"""
+    if not debug_root.exists():
+        return
+    cutoff = datetime.now().timestamp() - max_age_days * 86400
+    for subdir in debug_root.iterdir():
+        if subdir.is_dir():
+            try:
+                if subdir.stat().st_mtime < cutoff:
+                    import shutil
+                    shutil.rmtree(subdir, ignore_errors=True)
+            except OSError:
+                pass
 
 
 
@@ -102,32 +118,54 @@ def _brief(val) -> str:
     return "有" if val else "空"
 
 
-def _fallback_preview(loop: "AgentLoop") -> dict:
-    """确定性回退：从 context 直接构造预览数据，不调 LLM"""
+def _build_preview(loop: "AgentLoop") -> dict:
+    """确定性构建：从 context 直接构造实验记录预览，不调 LLM。
+    parse_notes 失败时的退化兜底——保证输出结构完整，但不做语义推断和补全。"""
     ctx = loop._schema_context or {}
     return {
         "id": loop.store.next_id(),
         "title": ctx.get("title", ""),
+        "date": ctx.get("date", ""),
+        "experimenter": ctx.get("experimenter", ""),
+        "status": ctx.get("status", "planned"),
+        "tags": ctx.get("tags", []),
         "purpose": ctx.get("purpose", ""),
         "materials": ctx.get("materials", []),
+        "equipment": ctx.get("equipment", []),
+        "experimental_plan": ctx.get("experimental_plan", []),
         "sop": ctx.get("sop", []),
         "process_parameters": ctx.get("process_parameters", []),
         "observations": ctx.get("observations", {"no_anomalies": True, "items": []}),
-        "results": ctx.get("results", {}),
         "characterization": ctx.get("characterization", []),
-        "equipment": ctx.get("equipment", []),
+        "results": ctx.get("results", {"qualitative": "", "key_data": [], "figures": []}),
         "conclusion": ctx.get("conclusion", ""),
         "next_steps": ctx.get("next_steps", []),
-        "tags": ctx.get("tags", []),
-        "status": ctx.get("status", "planned"),
-        "date": ctx.get("date", ""),
-        "experimenter": ctx.get("experimenter", ""),
         "original_notes": "",
         "references": list(loop.references),
     }
 
 
-# ============================================================================
+def _extract_thread_dialogue(loop: "AgentLoop") -> str:
+    """从当前线程 history 中提取用户与助手的纯文本对话。
+    过滤系统消息、工具调用、工具结果——只保留自然语言往返。"""
+    lines: list[str] = []
+    for m in loop.history:
+        role = m.get("role", "")
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "system":
+            continue
+        if m.get("tool_calls"):
+            continue
+        if role == "tool":
+            continue
+        label = "用户" if role == "user" else "助手"
+        lines.append(f"{label}: {content}")
+    return "\n".join(lines)
+
+
+#============================================================================
 # 工具日志摘要
 # ============================================================================
 
@@ -442,8 +480,6 @@ class ToolExecutor:
 请将新的分析维度融入报告，输出完整的更新后报告。
 保持三区域结构（事实呈现/发现提示/值得思考的问题）。
 不要只输出新增部分——输出完整报告。"""
-                from lib.analyzer import analyze_experiments
-                # 使用独立 LLM 调用，让 LLM 融合新旧内容
                 expanded = loop.llm.analyze(
                     system_prompt="你是 Exdiary 分析助手。请将补充分析维度融入已有报告，输出完整的更新后报告。中文回复。",
                     user_prompt=append_prompt,
@@ -475,10 +511,52 @@ class ToolExecutor:
         if loop._schema_context is None:
             return {"error": "not_in_record_mode",
                     "message": "generate_record 只在记录实验时可用。"}
+
         notes = loop._build_notes_from_context()
+
+        # 构建增强 prompt: 四段式 = RAW SCHEMA + DIALOGUE + NOTES + REFERENCES
+        import json as _json
+        prompt_parts = []
+
+        # 段 1: 原始 Schema JSON —— 让提取 LLM 精确知道哪些字段已填、哪些缺失
+        raw_schema = _json.dumps(
+            loop._schema_context, ensure_ascii=False, indent=2)
+        prompt_parts.append(
+            "---RAW SCHEMA (current field values, empty means unfilled)---\n"
+            + raw_schema)
+
+        # 段 2: 线程纯文本对话 —— 保留用户原始措辞（近似值、事后补充等细节）
+        dialogue = _extract_thread_dialogue(loop)
+        if dialogue:
+            prompt_parts.append(
+                "---DIALOGUE (original conversation for nuance)---\n"
+                + dialogue)
+
+        # 段 3: 自然语言实验描述 —— 帮助 LLM 理解语义连贯性
+        prompt_parts.append(
+            "---NOTES TEXT (structured summary of the experiment)---\n"
+            + notes)
+
+        # 段 4: 已加载引用实验的结构化摘要 —— 帮助校验和恢复漏掉的字段
+        if loop.references:
+            ref_parts = []
+            for ref_id in loop.references:
+                ref_exp = loop.store.load(ref_id)
+                if ref_exp:
+                    ref_parts.append(
+                        _json.dumps(self._summarize_exp(ref_exp),
+                                    ensure_ascii=False, indent=2))
+            if ref_parts:
+                prompt_parts.append(
+                    "---REFERENCES (loaded experiments for comparison, "
+                    "do NOT copy conclusion/results directly)---\n"
+                    + "\n".join(ref_parts))
+
+        enhanced_notes = "\n\n".join(prompt_parts)
+
         try:
             from lib.parser import parse_notes
-            result = parse_notes(notes, loop.llm)
+            result = parse_notes(enhanced_notes, loop.llm)
             result["original_notes"] = notes
             # 子 Agent: 使用现有 EXP ID（修改已有实验）
             if loop.child.is_child and loop.child.exp_id:
@@ -488,23 +566,37 @@ class ToolExecutor:
             result["references"] = list(loop.references)
             loop._generated_preview = result
             loop._generated_notes = notes
+            card_summary = result.get("title", "")
+            conclusion = (result.get("conclusion") or "").strip()
+            if conclusion:
+                card_summary += " — " + conclusion[:40]
             return {"status": "generated", "pause": True,
+                    "display": "record_generated",
+                    "exp_id": result["id"],
+                    "summary": card_summary,
                     "response_type": "generate", "include_state": True,
                     "id": result["id"],
                     "title": result.get("title", ""),
                     "fields_count": sum(1 for v in result.values() if v)}
         except Exception:
-            preview = _fallback_preview(loop)
+            preview = _build_preview(loop)
             # 子 Agent 回退也使用现有 EXP ID
             if loop.child.is_child and loop.child.exp_id:
                 preview["id"] = loop.child.exp_id
             loop._generated_preview = preview
             loop._generated_notes = notes
+            card_summary = preview.get("title", "")
+            conclusion = (preview.get("conclusion") or "").strip()
+            if conclusion:
+                card_summary += " — " + conclusion[:40]
             return {"status": "generated", "pause": True,
+                    "display": "record_generated",
+                    "exp_id": preview["id"],
+                    "summary": card_summary,
                     "response_type": "generate", "include_state": True,
                     "id": preview["id"],
                     "title": preview.get("title", ""),
-                    "note": "使用了确定性回退，部分字段可能需手动补全"}
+                    "note": "LLM 提取失败，使用了确定性回退，部分字段可能需手动补全"}
 
     # -- read_update_log --
 
@@ -698,13 +790,10 @@ class ToolExecutor:
                 continue
 
             exp_id = m.group(1).upper()
-            if exp_id in loop.references:
-                results[exp_id] = {"status": "already_loaded",
-                                   "note": "该实验数据已在对话中，无需重复加载"}
-                continue
             exp = self.store.load(exp_id)
             if exp:
-                loop.references.append(exp_id)
+                if exp_id not in loop.references:
+                    loop.references.append(exp_id)
                 results[exp_id] = self._summarize_exp(exp)
             else:
                 results[exp_id] = {"error": "实验不存在",
@@ -955,7 +1044,9 @@ class ToolExecutor:
 class AgentLoop:
     """基于 tool calling 的对话循环"""
 
-    def __init__(self, llm_client, experiment_store, debug_dir: str | Path | None = None,
+    def __init__(self, llm_client, experiment_store, *,
+                 tool_executor: "ToolExecutor | None" = None,
+                 debug_dir: str | Path | None = None,
                  thread_store=None, update_log_store=None,
                  favorites_store=None, analysis_store=None,
                  analysis_svc=None, extraction_svc=None):
@@ -966,9 +1057,12 @@ class AgentLoop:
         self.references = []        # 已加载的引用实验 ID
         self.experiment_type = "other"
         self.turn_count = 0
-        self.tools = ToolExecutor(experiment_store, update_log_store=update_log_store,
-                                  favorites_store=favorites_store,
-                                  analysis_store=analysis_store)
+        if tool_executor is not None:
+            self.tools = tool_executor
+        else:
+            self.tools = ToolExecutor(experiment_store, update_log_store=update_log_store,
+                                      favorites_store=favorites_store,
+                                      analysis_store=analysis_store)
         self._generated_preview = None   # generate_record 工具产出
         self._generated_notes = None
         self._llm_call_seq = 0      # LLM 调用全局序号（跨 turn 递增）
@@ -1001,6 +1095,9 @@ class AgentLoop:
                 datetime.now().strftime("%Y%m%d_%H%M%S")
             )
             os.makedirs(self.debug_dir, exist_ok=True)
+
+        # 清理超过 30 天的旧 _debug 目录
+        _cleanup_old_debug_dirs(Path(experiment_store.path) / "_debug")
 
     # -- 模式管理 --
 
@@ -1098,12 +1195,36 @@ class AgentLoop:
             # ---- 日志: LLM 请求 ----
             self._log_llm_request(seq, messages)
 
-            response = self.llm.chat(
-                messages=messages,
-                tools=self._get_active_tools(),
-                temperature=0.3,
-                reasoning_effort="max",
-            )
+            try:
+                response = self.llm.chat(
+                    messages=messages,
+                    tools=self._get_active_tools(),
+                    temperature=0.3,
+                    reasoning_effort="max",
+                )
+            except Exception as e:
+                self._log_llm_response(seq, LLMResponse(content=f"[ERROR] {e}"), "")
+                # 回退 history 到最近一条 user 消息，清理其后的所有残留
+                cut = len(self.history)
+                for i in range(len(self.history) - 1, -1, -1):
+                    if self.history[i].get("role") == "user":
+                        cut = i + 1
+                        break
+                del self.history[cut:]
+                self.turn_count = sum(1 for m in self.history if m.get("role") == "user")
+                self.history.append({"role": "system",
+                    "content": f"[系统内部] LLM 调用失败（已重试3次）: {str(e)[:200]}"})
+                if log:
+                    log.system("error", "llm_call_failed", error=str(e)[:200])
+                    agent = "child" if self.child.is_child else "parent"
+                    log.agent(agent, "assistant",
+                        "抱歉，AI 服务暂时不可用（已自动重试3次）。请稍后重试。",
+                        exp=self.child.exp_id)
+                self._save_runtime_state()
+                return {"type": "reply",
+                        "message": "抱歉，AI 服务暂时不可用（已自动重试3次）。请稍后重试。",
+                        "context": self._schema_context}
+
             resp_content = response.content
             resp_tool_calls = response.tool_calls
             _reasoning = response.reasoning
@@ -1286,6 +1407,14 @@ class AgentLoop:
             parts.append(f"日期: {ctx['date']}")
         if ctx.get("experimenter"):
             parts.append(f"实验者: {ctx['experimenter']}")
+        tags = ctx.get("tags", [])
+        if tags:
+            parts.append(f"标签: {', '.join(str(t) for t in tags)}")
+        status_val = ctx.get("status", "")
+        if status_val and status_val != "planned":
+            status_cn = {"planned": "计划中", "running": "进行中", "done": "已完成",
+                         "failed": "失败", "repeated": "重复"}.get(status_val, status_val)
+            parts.append(f"状态: {status_cn}")
         if ctx.get("purpose"):
             parts.append(f"实验目的: {ctx['purpose']}")
         materials = ctx.get("materials", [])
@@ -1311,6 +1440,16 @@ class AgentLoop:
             lines = ["实验步骤:"]
             for i, s in enumerate(sop, 1):
                 lines.append(f"  {i}. {s}")
+            parts.append("\n".join(lines))
+        exp_plan = ctx.get("experimental_plan", [])
+        if exp_plan:
+            lines = ["实验方案:"]
+            for i, p in enumerate(exp_plan, 1):
+                if isinstance(p, dict):
+                    group = p.get("group", "")
+                    condition = p.get("condition", "")
+                    expected = f", 预期{p.get('expected', '')}" if p.get("expected") else ""
+                    lines.append(f"  {i}. 组'{group}': {condition}{expected}")
             parts.append("\n".join(lines))
         params = ctx.get("process_parameters", [])
         if params:
@@ -1702,21 +1841,44 @@ class AgentLoop:
 
     # -- 上下文窗口管理 --
 
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """估算 token 数。中文/CJK ~1 char/token，英文 ~4 char/token。"""
+        ideograph = 0
+        ascii_chars = 0
+        for c in text:
+            cp = ord(c)
+            if cp < 128:
+                ascii_chars += 1
+            elif (0x4E00 <= cp <= 0x9FFF       # CJK 基本区
+                  or 0x3400 <= cp <= 0x4DBF     # CJK 扩展 A
+                  or 0x20000 <= cp <= 0x2A6DF   # CJK 扩展 B
+                  or 0xF900 <= cp <= 0xFAFF     # CJK 兼容汉字
+                  or 0x3000 <= cp <= 0x303F     # CJK 标点
+                  or 0xFF00 <= cp <= 0xFFEF     # 全角标点
+                  or 0xAC00 <= cp <= 0xD7AF     # 韩文
+                  or 0x3040 <= cp <= 0x309F     # 日文平假名
+                  or 0x30A0 <= cp <= 0x30FF     # 日文片假名
+            ):
+                ideograph += 1
+        other = len(text) - ideograph - ascii_chars
+        return int(ideograph * 1.2 + ascii_chars * 0.25 + other * 0.8)
+
     def _maybe_summarize(self) -> None:
         """上次摘要后的新增消息超过 30 万 token 时，生成新摘要。self.history 不动。"""
         if not self.thread_store:
             return
         start = self._last_summarized_idx or 0
         new_msgs = self.history[start:]
-        new_chars = sum(len(m.get("content") or "") for m in new_msgs)
-        if new_chars // 2 < 300_000:
+        new_chars = "".join(m.get("content") or "" for m in new_msgs)
+        if self._estimate_tokens(new_chars) < 300_000:
             return
         # 保留最近 10 万 token 完整，其余进摘要
-        keep = 0; keep_chars = 0
+        keep = 0; keep_chars_acc = ""
         for m in reversed(new_msgs):
-            keep_chars += len(m.get("content") or "")
+            keep_chars_acc = (m.get("content") or "") + keep_chars_acc
             keep += 1
-            if keep_chars // 2 >= 100_000:
+            if self._estimate_tokens(keep_chars_acc) >= 100_000:
                 break
         to_summarize = new_msgs[:-keep] if keep < len(new_msgs) else []
         if not to_summarize:
@@ -1733,7 +1895,21 @@ class AgentLoop:
             )
             new_summary = raw[:3000]
         except Exception:
-            lines = [f"用户: {(m.get('content') or '')[:80]}" for m in to_summarize if m.get("role") == "user"]
+            lines = []
+            for m in to_summarize:
+                role = m.get("role", "?")
+                content = (m.get("content") or "")[:200]
+                if role == "user":
+                    lines.append(f"用户: {content}")
+                elif role == "system" and ("已被修改" in content or "thread_" in content):
+                    lines.append(f"系统: {content}")
+                elif role == "tool":
+                    try:
+                        r = __import__("json").loads(content)
+                        ok = "error" not in r
+                        lines.append(f"工具结果: {'成功' if ok else '失败'}")
+                    except Exception:
+                        lines.append(f"工具结果: ...")
             new_summary = "\n".join(lines[-80:])
         # 追加到已有摘要后面，不覆盖
         prev = self.thread_store.get_global_context()

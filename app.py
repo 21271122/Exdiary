@@ -1,18 +1,23 @@
-import os
 import sys
+import warnings
 import yaml
 import socket
 import threading
 from pathlib import Path
+from typing import Any
 from flask import Flask, g
+from pydantic import BaseModel, Field
 
 from lib.logger import init_logger, get_logger
 from lib.llm import LLMClient
-from lib.storage import ExperimentStore, FavoritesStore, AnalysisStore, UpdateLogStore, ThreadStore
+from lib.repositories.yaml_experiment import YamlExperimentRepository
+from lib.repositories.yaml_analysis import YamlAnalysisRepository
+from lib.repositories.yaml_thread import ThreadRepository
+from lib.repositories.yaml_favorites import YamlFavoritesRepository
+from lib.repositories.yaml_update_log import YamlUpdateLogRepository
 from lib.services.experiment import ExperimentService
 from lib.services.extraction import ExtractionService
 from lib.services.analysis import AnalysisService
-from lib.services.agent import AgentService
 from lib.services.template import TemplateService
 
 from routes.dashboard import dashboard_bp
@@ -32,18 +37,30 @@ from routes.pages import pages_bp
 BASE_DIR = Path(__file__).parent
 SETTINGS_PATH = BASE_DIR / "config.yaml"
 
-DEFAULT_SETTINGS = {
-    "DEEPSEEK_API_KEY": "",
-    "DEEPSEEK_MODEL": "deepseek-v4-flash",
-    "DEEPSEEK_ANALYZE_MODEL": "deepseek-v4-pro",
-    "PORT": "5000",
-    "HOST": "0.0.0.0",
-    "GUI": "true",
-}
+
+class Settings(BaseModel):
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_MODEL: str = "deepseek-v4-flash"
+    DEEPSEEK_ANALYZE_MODEL: str = "deepseek-v4-pro"
+    PORT: int = Field(default=5000, ge=1024, le=65535)
+    HOST: str = "0.0.0.0"
+    GUI: str = "true"
+
+    @classmethod
+    def _warn_unknown_model(cls, model_name: str, field_name: str) -> None:
+        if not model_name.startswith("deepseek-"):
+            warnings.warn(
+                f"{field_name}='{model_name}' 不是已知的 DeepSeek 模型前缀，请确认配置正确。",
+                stacklevel=2,
+            )
+
+    def validate_model_names(self) -> None:
+        self._warn_unknown_model(self.DEEPSEEK_MODEL, "DEEPSEEK_MODEL")
+        self._warn_unknown_model(self.DEEPSEEK_ANALYZE_MODEL, "DEEPSEEK_ANALYZE_MODEL")
 
 
-def _parse_dotenv(path: Path) -> dict:
-    cfg = {}
+def _parse_dotenv(path: Path) -> dict[str, str]:
+    cfg: dict[str, str] = {}
     if not path.exists():
         return cfg
     with open(path, "r", encoding="utf-8") as f:
@@ -59,30 +76,47 @@ def _parse_dotenv(path: Path) -> dict:
     return cfg
 
 
-def load_settings() -> dict:
+def load_settings() -> Settings:
     if SETTINGS_PATH.exists():
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or DEFAULT_SETTINGS
+            raw = yaml.safe_load(f) or {}
+        settings = Settings(**raw)
+        settings.validate_model_names()
+        return settings
     old = _parse_dotenv(BASE_DIR / ".env")
-    settings = {**DEFAULT_SETTINGS}
-    for k in DEFAULT_SETTINGS:
-        if k in old:
-            settings[k] = old[k]
+    raw = {
+        "DEEPSEEK_API_KEY": old.get("DEEPSEEK_API_KEY", ""),
+        "DEEPSEEK_MODEL": old.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        "DEEPSEEK_ANALYZE_MODEL": old.get("DEEPSEEK_ANALYZE_MODEL", "deepseek-v4-pro"),
+        "PORT": int(old.get("PORT", "5000")),
+        "HOST": old.get("HOST", "0.0.0.0"),
+        "GUI": old.get("GUI", "true"),
+    }
+    settings = Settings(**raw)
     save_settings(settings)
     return settings
 
 
-def save_settings(data: dict) -> None:
+def save_settings(data: Settings | dict[str, Any]) -> None:
     global config
-    clean = {}
-    for k in DEFAULT_SETTINGS:
-        clean[k] = str(data.get(k, DEFAULT_SETTINGS[k])).strip()
+    if isinstance(data, dict):
+        # 强制类型转换，防止表单提交的字符串值（如 PORT="5000"）被 Pydantic 拒绝
+        normalized: dict[str, Any] = {}
+        for k, v in data.items():
+            if k == "PORT" and isinstance(v, str):
+                normalized[k] = int(v)
+            elif k == "GUI":
+                normalized[k] = str(v).lower() if isinstance(v, (bool, int)) else str(v).strip()
+            else:
+                normalized[k] = str(v).strip() if isinstance(v, str) else v
+        data = Settings(**normalized)
+    clean: dict[str, Any] = data.model_dump()
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         yaml.dump(clean, f, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2)
     config = clean
 
 
-config = load_settings()
+config = load_settings().model_dump()
 init_logger(BASE_DIR / "experiments")
 
 
@@ -111,25 +145,17 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
     # ---- 仓储层 ----
-    exp_repo = ExperimentStore(str(BASE_DIR / "experiments"))
-    analysis_repo = AnalysisStore(str(BASE_DIR / "experiments" / "_analysis_history"))
-    thread_repo = ThreadStore(str(BASE_DIR / "experiments" / "_threads"))
-    favorites_repo = FavoritesStore(str(BASE_DIR / "experiments" / "_favorites.yaml"))
-    update_log_repo = UpdateLogStore(str(BASE_DIR / "experiments" / "_update_logs"))
+    exp_repo = YamlExperimentRepository(str(BASE_DIR / "experiments"))
+    analysis_repo = YamlAnalysisRepository(str(BASE_DIR / "experiments" / "_analysis_history"))
+    thread_repo = ThreadRepository(str(BASE_DIR / "experiments" / "_threads"))
+    favorites_repo = YamlFavoritesRepository(str(BASE_DIR / "experiments" / "_favorites.yaml"))
+    update_log_repo = YamlUpdateLogRepository(str(BASE_DIR / "experiments" / "_update_logs"))
 
     # ---- 服务层 ----
     experiment_svc = ExperimentService(exp_repo, update_log_repo, favorites_repo, BASE_DIR)
     extraction_svc = ExtractionService(None)
-    analysis_svc = AnalysisService(exp_repo, analysis_repo, None)
+    analysis_svc = AnalysisService(exp_repo, analysis_repo, get_analyze_llm())
     template_svc = TemplateService(str(BASE_DIR / "experiment_templates"))
-    agent_svc = AgentService(
-        llm_client=None,
-        exp_repo=exp_repo, thread_repo=thread_repo,
-        update_log_repo=update_log_repo, favorites_repo=favorites_repo,
-        analysis_repo=analysis_repo,
-        extraction_svc=extraction_svc,
-        experiment_svc=experiment_svc, analysis_svc=analysis_svc,
-    )
 
     # ---- flask.g 注入 ----
     @app.before_request
@@ -144,7 +170,6 @@ def create_app():
         g.extraction_svc = extraction_svc
         g.analysis_svc = analysis_svc
         g.template_svc = template_svc
-        g.agent_svc = agent_svc
         g.base_dir = BASE_DIR
         g.get_extract_llm = get_extract_llm
         g.get_analyze_llm = get_analyze_llm
