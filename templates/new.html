@@ -17,12 +17,7 @@
     <div style="text-align:center;padding:2rem;opacity:0.5">Agent initializing...</div>
   </div>
 
-  <div id="chat-progress" style="display:none;padding:0.4rem 0.75rem;border-top:2px solid var(--black)">
-    <div style="height:4px;background:var(--off-white);margin-bottom:0.2rem">
-      <div id="progress-fill" style="height:100%;background:var(--black);transition:width 0.3s;width:0%"></div>
-    </div>
-    <small style="font-weight:700;font-size:0.7rem;opacity:0.5" id="progress-text"></small>
-  </div>
+  <small id="status-bar" style="display:none;font-weight:700;font-size:0.7rem;opacity:0.5;padding:0.3rem 0.75rem"></small>
 
   <div id="quick-replies" style="display:none;gap:0.4rem;padding:0.4rem 0.75rem;flex-wrap:wrap;border-top:2px solid var(--black)"></div>
 
@@ -297,7 +292,7 @@ function restoreAgentState() {
     _isPageLoad = true;
     renderHistoryMsgs(_agentState.history || []);
     _isPageLoad = false;
-    updateProgress(_agentState.completeness || 0, _agentState.turn_count || 0);
+    updateStatus('',_agentState.turn_count || 0);
     return true;
   } catch(e) { return false; }
 }
@@ -311,7 +306,7 @@ async function startAgent() {
     updateThreadColor(data.state);
     if (data.message != null) appendChat('agent', data.message);
     if (_agentState && _agentState.history) { _isPageLoad = true; renderHistoryMsgs(_agentState.history); _isPageLoad = false; }
-    updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
+    updateStatus('',data.state ? data.state.turn_count : 0);
     updateQuickReplies([]);
     saveAgentState();
   } catch(e) { appendChat('agent', 'Init failed: ' + e.message); }
@@ -319,7 +314,7 @@ async function startAgent() {
 
 function _isInternalMsg(m) {
   if (m.role === 'system') return true;
-  if (m.role === 'assistant' && m.tool_calls && (!m.content || !String(m.content).trim())) return true;
+  if (m.role === 'assistant' && m.tool_calls) return true;
   return false;
 }
 function _shouldRenderToolResult(content) {
@@ -365,27 +360,81 @@ async function sendMessage() {
   document.getElementById('btn-send').disabled = true;
 
   appendChat('user', msg);
+  updateStatus('Thinking...', _agentState ? _agentState.turn_count : 0);
 
   try {
-    var r = await fetch('/api/agent/message', {
+    var r = await fetch('/api/agent/message/stream', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({message: msg, state: _agentState})
     });
-    var data = await r.json();
+    var reader = r.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+    var streamMsg = '';
+    var streamDiv = null;
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, {stream: true});
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (!line.startsWith('data: ')) continue;
+        try { var evt = JSON.parse(line.slice(6)); } catch(e) { continue; }
+
+        if (evt.event === 'text') {
+          if (!streamDiv) {
+            var container = document.getElementById('chat-messages');
+            streamDiv = document.createElement('div'); streamDiv.className = 'chat-msg agent';
+            streamDiv.innerHTML = '<div class="chat-bubble stream-content"></div>';
+            container.appendChild(streamDiv);
+          }
+          streamMsg += evt.content;
+          streamDiv.querySelector('.stream-content').innerHTML = typeof marked !== 'undefined' ? marked.parse(streamMsg) : escHtml(streamMsg);
+          var c = document.getElementById('chat-messages');
+          c.scrollTop = c.scrollHeight;
+        } else if (evt.event === 'tool') {
+          updateStatus('Calling: ' + evt.name, _agentState ? _agentState.turn_count : 0);
+          if (streamDiv) {
+            streamDiv.querySelector('.stream-content').innerHTML = typeof marked !== 'undefined' ? marked.parse(streamMsg) : escHtml(streamMsg);
+            streamDiv = null; streamMsg = '';
+          }
+        } else if (evt.event === 'tool_done') {
+          updateStatus('Thinking...', _agentState ? _agentState.turn_count : 0);
+        } else if (evt.event === 'done') {
+          var hadStream = !!streamDiv;
+          if (streamDiv) {
+            streamDiv.querySelector('.stream-content').innerHTML = typeof marked !== 'undefined' ? marked.parse(streamMsg) : escHtml(streamMsg);
+            streamDiv = null; streamMsg = '';
+          }
+          _agentState = evt.state;
+          updateThreadColor(evt.state);
+          renderNewToolResults(evt.state);
+          if (evt.type === 'saved' && evt.exp_id) {
+            // saved 类型不追加聊天气泡，卡片已渲染
+          } else if (evt.type === 'reply' && evt.message && !hadStream) {
+            appendChat('agent', evt.message);
+          } else if (evt.type === 'generate') {
+            appendChat('agent', evt.message || '实验记录已生成。');
+          }
+          updateStatus('',evt.state ? evt.state.turn_count : 0);
+          updateQuickReplies([]);
+          saveAgentState();
+        } else if (evt.event === 'error') {
+          if (streamDiv) { streamDiv.remove(); streamDiv = null; streamMsg = ''; }
+          appendChat('agent', evt.message || 'Stream error');
+          updateStatus('',_agentState ? _agentState.turn_count : 0);
+        }
+      }
+    }
     _sending = false;
     document.getElementById('btn-send').disabled = false;
-    if (!data.ok) { appendChat('agent', 'Failed: ' + (data.error || 'unknown')); return; }
-    _agentState = data.state;
-    updateThreadColor(data.state);
-    renderNewToolResults(data.state);
-    if (data.message != null) appendChat('agent', data.message);
-    updateProgress(data.completeness || 0, data.state ? data.state.turn_count : 0);
-    updateQuickReplies([]);
-    saveAgentState();
-    if (data.type === 'saved' && data.exp_id) { return; }
   } catch(e) {
     _sending = false;
     document.getElementById('btn-send').disabled = false;
+    updateStatus('',_agentState ? _agentState.turn_count : 0);
     appendChat('agent', 'Network error: ' + e.message);
   }
 }
@@ -401,15 +450,15 @@ function appendChat(role, content) {
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
-
-function updateProgress(completeness, turn) {
-  var bar = document.getElementById('chat-progress');
-  if (!bar) return;
-  if (completeness > 0 || (turn && turn > 0)) {
-    bar.style.display = '';
-    document.getElementById('progress-fill').style.width = Math.round(completeness * 100) + '%';
-    document.getElementById('progress-text').textContent = 'Completeness ' + Math.round(completeness*100) + '%  Round ' + (turn||1);
-  }
+function updateStatus(text, turn) {
+  var el = document.getElementById('status-bar');
+  if (!el) return;
+  if (!text && (!turn || turn <= 0)) return;
+  el.style.display = '';
+  var parts = [];
+  if (text) parts.push(text);
+  if (turn > 0) parts.push('Round ' + turn);
+  el.textContent = parts.join(' — ');
 }
 
 function updateQuickReplies(replies) {

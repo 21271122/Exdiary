@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.min.js"></script>
 <link rel="stylesheet" href="/static/css/de-stijl.css">
+<link rel="stylesheet" href="/static/css/components.css">
 <style>
 /* Page-specific overrides */
 {% block page_bg %}body { background-color: var(--white); }{% endblock %}
@@ -45,25 +46,8 @@
 {% endblock %}
 
 <script src="/static/js/nav.js"></script>
-<script>
-// Global: render markdown content blocks
-document.addEventListener('DOMContentLoaded', function() {
-  document.querySelectorAll('.markdown-content').forEach(function(el) {
-    if (el.dataset.rendered) return;
-    el.innerHTML = marked.parse(el.textContent);
-    el.dataset.rendered = '1';
-  });
-});
-
-// Global: observe new content added by htmx
-if (typeof htmx !== 'undefined') {
-  htmx.on('htmx:afterSwap', function() {
-    document.querySelectorAll('.markdown-content:not([data-rendered])').forEach(function(el) {
-      el.innerHTML = marked.parse(el.textContent);
-      el.dataset.rendered = '1';
-    });
-  });
-}
-</script>
+<script src="/static/js/api-client.js"></script>
+<script src="/static/js/edit-mode.js"></script>
+<script src="/static/js/child-agent.js"></script>
 </body>
 </html>

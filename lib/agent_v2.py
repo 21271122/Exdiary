@@ -8,6 +8,7 @@ import json, os, re, sys, traceback
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Generator
 
 from lib.llm import LLMResponse
 from lib.logger import get_logger
@@ -1067,13 +1068,20 @@ class AgentLoop:
         self._generated_notes = None
         self._llm_call_seq = 0      # LLM 调用全局序号（跨 turn 递增）
 
+        # 会话ID：全新启动时生成，重启时从 _current_state.yaml 恢复
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 冷存储：被压缩裁掉的消息写入 _history/{session_id}.jsonl
+        _cold_dir = Path(experiment_store.path).parent / "_history"
+        _cold_dir.mkdir(parents=True, exist_ok=True)
+        self._cold_store_path = _cold_dir / f"{self.session_id}.jsonl"
+
         # 线程系统 + 子Agent 标记 + 服务引用
         self.thread_store = thread_store
         self.update_log_store = update_log_store
         self.thread = ThreadState()
         self.child = ChildContext()
         self.modified_values = {}
-        self._last_summarized_idx = 0
         self._l0_generated_at = None
         self.analysis_svc = analysis_svc
         self.extraction_svc = extraction_svc
@@ -1170,18 +1178,15 @@ class AgentLoop:
         while True:
             self._maybe_inject_thread_start()   # 循环顶部检查 flag
 
-            # 构建 LLM 消息：静态 Prompt → 持久层 history → 请求层状态
+            # 构建 LLM 消息：静态 Prompt → 历史摘要 → history → 请求层状态
             messages = [
                 {"role": "system", "content": build_system_prompt()},
             ]
-            split = self._last_summarized_idx or 0
-            if split > 0 and self.thread_store:
+            if self.thread_store:
                 summary = self.thread_store.get_global_context()
                 if summary:
                     messages.append({"role": "system", "content": f"[历史摘要]\n{summary}"})
-                messages.extend(self.history[split:])
-            else:
-                messages.extend(self.history)
+            messages.extend(self.history)
             # 请求层：record 模式下追加实时 Schema 状态
             if self.mode == "record" and self._schema_context is not None:
                 messages.append({"role": "system",
@@ -1361,6 +1366,191 @@ class AgentLoop:
                 _no_progress_count = 0
 
             # 其他工具执行完 → 继续循环
+
+    # -- 流式主循环 --
+
+    def run_stream(self, user_message: str = "") -> Generator[dict[str, Any], None, None]:
+        """和 run() 逻辑相同，但通过 Generator yield SSE 事件实现流式输出。"""
+        from lib.llm import StreamEvent
+
+        log = get_logger()
+        if user_message:
+            self.thread.current_turn_user_idx = len(self.history)
+            self.history.append({"role": "user", "content": user_message})
+            self.turn_count += 1
+            if log:
+                agent = "child" if self.child.is_child else "parent"
+                log.agent(agent, "user", user_message, exp=self.child.exp_id)
+
+        consecutive_errors = 0
+        last_tool = None
+        _no_progress_count = 0
+
+        while True:
+            self._maybe_inject_thread_start()
+
+            messages = [{"role": "system", "content": build_system_prompt()}]
+            if self.thread_store:
+                summary = self.thread_store.get_global_context()
+                if summary:
+                    messages.append({"role": "system", "content": f"[历史摘要]\n{summary}"})
+            messages.extend(self.history)
+            if self.mode == "record" and self._schema_context is not None:
+                messages.append({"role": "system", "content": self._build_schema_status()})
+            messages.append({"role": "system", "content": self._build_thread_status()})
+            self._llm_call_seq += 1
+            seq = self._llm_call_seq
+            self._log_llm_request(seq, messages)
+
+            try:
+                stream = self.llm.chat_stream(
+                    messages=messages,
+                    tools=self._get_active_tools(),
+                    temperature=0.3,
+                    reasoning_effort="max",
+                )
+            except Exception as e:
+                self._log_llm_response(seq, LLMResponse(content=f"[ERROR] {e}"), "")
+                cut = len(self.history)
+                for i in range(len(self.history) - 1, -1, -1):
+                    if self.history[i].get("role") == "user":
+                        cut = i + 1
+                        break
+                del self.history[cut:]
+                self.turn_count = sum(1 for m in self.history if m.get("role") == "user")
+                self.history.append({"role": "system",
+                    "content": f"[系统内部] LLM 调用失败: {str(e)[:200]}"})
+                self._save_runtime_state()
+                yield {"event": "error", "message": "LLM 调用失败，请稍后重试。"}
+                return
+
+            resp_content = ""
+            resp_tool_calls = None
+            _reasoning = ""
+            current_tool = ""
+
+            # 消费流事件
+            try:
+                while True:
+                    try:
+                        event = next(stream)
+                    except StopIteration as exc:
+                        resp = exc.value
+                        resp_content = resp.content
+                        resp_tool_calls = resp.tool_calls
+                        _reasoning = resp.reasoning
+                        break
+
+                    if event.type == "text":
+                        yield {"event": "text", "content": event.content}
+                    elif event.type == "tool_call":
+                        if event.tool_name and event.tool_name != current_tool:
+                            current_tool = event.tool_name
+                            yield {"event": "tool", "name": current_tool}
+            except Exception as e:
+                yield {"event": "error", "message": str(e)[:200]}
+                return
+
+            self._log_llm_response(seq,
+                LLMResponse(content=resp_content, reasoning=_reasoning, tool_calls=resp_tool_calls), _reasoning)
+
+            # 纯文本 → 返回
+            if resp_content and not resp_tool_calls:
+                entry = {"role": "assistant", "content": resp_content}
+                if _reasoning:
+                    entry["reasoning_content"] = _reasoning
+                self.history.append(entry)
+                self._check_thread_cancellation(_no_progress_count)
+                self._save_runtime_state()
+                yield {"event": "done", "type": "reply", "message": resp_content,
+                       "context": self._schema_context}
+                return
+
+            # 调用了工具
+            if log and resp_content:
+                ag = "child" if self.child.is_child else "parent"
+                tc_names = [tc["function"]["name"] for tc in (resp_tool_calls or [])]
+                log.agent(ag, "assistant", resp_content, tool_calls=tc_names, exp=self.child.exp_id)
+
+            has_record_tool = False
+            for tc in (resp_tool_calls or []):
+                name = tc["function"]["name"]
+                if name in ("update_schema", "analyze"):
+                    has_record_tool = True
+                raw_args_str = tc["function"]["arguments"]
+                args = json.loads(raw_args_str)
+                result = self.tools.execute(name, args, self)
+                yield {"event": "tool_done", "name": name}
+
+                if log:
+                    ag = "child" if self.child.is_child else "parent"
+                    ok = "error" not in result
+                    kw = _tool_log_summary(name, args, result)
+                    log.tool(ag, name, ok, exp=self.child.exp_id, **kw)
+
+                tc_dict = {
+                    "id": tc["id"], "type": "function",
+                    "function": {"name": name, "arguments": raw_args_str},
+                }
+                entry = {"role": "assistant", "content": resp_content or None, "tool_calls": [tc_dict]}
+                if _reasoning:
+                    entry["reasoning_content"] = _reasoning
+                self.history.append(entry)
+                self.history.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "content": json.dumps(result, ensure_ascii=False),
+                })
+
+                if "error" in result:
+                    if name == last_tool:
+                        consecutive_errors += 1
+                    else:
+                        consecutive_errors = 1
+                        last_tool = name
+                    if consecutive_errors >= 3:
+                        self.history.append({"role": "assistant",
+                            "content": "抱歉，处理请求时遇到技术问题。"})
+                        self._save_runtime_state()
+                        yield {"event": "done", "type": "reply",
+                               "message": "抱歉，处理请求时遇到技术问题。"}
+                        return
+                else:
+                    consecutive_errors = 0
+                    last_tool = None
+
+                # pause 处理
+                if result.get("pause"):
+                    if name == "generate_record":
+                        if self.thread.id and not self.child.is_child:
+                            exp_id = self._generated_preview.get("id", "") if self._generated_preview else ""
+                            self._maybe_inject_thread_end(exp_id)
+                        if self._generated_preview is None:
+                            self._save_runtime_state()
+                            yield {"event": "done", "type": "reply",
+                                   "message": "生成失败，请重试或补充更多信息。"}
+                            return
+                        self._save_runtime_state()
+                        yield {"event": "done",
+                               "type": "generate",
+                               "message": "实验记录已生成，请在预览中确认。",
+                               "preview": self._generated_preview,
+                               "notes": self._generated_notes}
+                        return
+
+                    self._save_runtime_state()
+                    message = result.get("message") or resp_content or ""
+                    if name == "ask_user":
+                        questions = "\n".join(
+                            f"{i+1}. {q}" for i, q in enumerate(args.get("questions", [])))
+                        message = (resp_content + "\n\n" + questions) if resp_content else questions
+                    yield {"event": "done", "type": "reply",
+                           "message": message or "请在面板中选择实验。"}
+                    return
+
+            if not has_record_tool and self.thread.id:
+                _no_progress_count += 1
+            else:
+                _no_progress_count = 0
 
     # -- Step 1.4: Schema 状态摘要 --
 
@@ -1865,11 +2055,10 @@ class AgentLoop:
         return int(ideograph * 1.2 + ascii_chars * 0.25 + other * 0.8)
 
     def _maybe_summarize(self) -> None:
-        """上次摘要后的新增消息超过 30 万 token 时，生成新摘要。self.history 不动。"""
+        """新增消息超过 30 万 token 时，压缩旧消息、写入冷存储、裁剪 history。"""
         if not self.thread_store:
             return
-        start = self._last_summarized_idx or 0
-        new_msgs = self.history[start:]
+        new_msgs = self.history
         new_chars = "".join(m.get("content") or "" for m in new_msgs)
         if self._estimate_tokens(new_chars) < 300_000:
             return
@@ -1883,6 +2072,8 @@ class AgentLoop:
         to_summarize = new_msgs[:-keep] if keep < len(new_msgs) else []
         if not to_summarize:
             return
+        # 尝试 LLM 压缩；失败则保留完整 history，下次再试
+        import json as _json
         try:
             text = "\n".join(
                 f"[{m['role']}] {(m.get('content') or '')[:300]}"
@@ -1895,26 +2086,14 @@ class AgentLoop:
             )
             new_summary = raw[:3000]
         except Exception:
-            lines = []
+            return  # 压缩失败：history 完好，不裁剪，不写冷存储，下次再试
+        # 压缩成功：冷存储写入 + 裁剪 history + 追加摘要
+        with open(self._cold_store_path, "a", encoding="utf-8") as f:
             for m in to_summarize:
-                role = m.get("role", "?")
-                content = (m.get("content") or "")[:200]
-                if role == "user":
-                    lines.append(f"用户: {content}")
-                elif role == "system" and ("已被修改" in content or "thread_" in content):
-                    lines.append(f"系统: {content}")
-                elif role == "tool":
-                    try:
-                        r = __import__("json").loads(content)
-                        ok = "error" not in r
-                        lines.append(f"工具结果: {'成功' if ok else '失败'}")
-                    except Exception:
-                        lines.append(f"工具结果: ...")
-            new_summary = "\n".join(lines[-80:])
-        # 追加到已有摘要后面，不覆盖
+                f.write(_json.dumps(m, ensure_ascii=False) + "\n")
+        self.history = new_msgs[-keep:]
         prev = self.thread_store.get_global_context()
         combined = f"{prev}\n\n---\n\n{new_summary}" if prev else new_summary
-        self._last_summarized_idx = start + len(to_summarize)
         self.thread_store.update_global_context(combined,
             uncompressed_thread_ids=[self.thread.id] if self.thread.id else [])
 
@@ -1938,7 +2117,7 @@ class AgentLoop:
             "_current_turn_user_idx": self.thread.current_turn_user_idx,
             "modified_values": dict(self.modified_values),
             "_l0_generated_at": str(self._l0_generated_at) if self._l0_generated_at else None,
-            "_last_summarized_idx": self._last_summarized_idx,
+            "_session_id": self.session_id,
             "_is_child_agent": self.child.is_child,
             "_is_legacy": self.child.is_legacy,
             "_child_exp_id": self.child.exp_id,
@@ -1978,7 +2157,11 @@ class AgentLoop:
         loop.thread.current_turn_user_idx = data.get("_current_turn_user_idx", -1)
         loop.modified_values = data.get("modified_values", {})
         loop._l0_generated_at = data.get("_l0_generated_at")
-        loop._last_summarized_idx = data.get("_last_summarized_idx", 0)
+        loop.session_id = data.get("_session_id", loop.session_id)
+        # 冷存储路径：保持和 session_id 一致
+        _cold_dir = Path(store.path).parent / "_history"
+        _cold_dir.mkdir(parents=True, exist_ok=True)
+        loop._cold_store_path = _cold_dir / f"{loop.session_id}.jsonl"
         loop.child.is_child = data.get("_is_child_agent", False)
         loop.child.is_legacy = data.get("_is_legacy", False)
         loop.child.exp_id = data.get("_child_exp_id")

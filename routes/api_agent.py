@@ -1,4 +1,5 @@
-from flask import Blueprint, request, jsonify, g
+import json
+from flask import Blueprint, request, jsonify, Response, g, stream_with_context
 from lib.agent_factory import get_or_create_agent
 from routes.api_experiment import api_parse_confirm
 
@@ -74,6 +75,58 @@ def api_agent_message():
     return jsonify({"ok": True, "state": agent.state_to_dict(),
                     "type": result["type"], "message": result.get("message", ""),
                     "context": result.get("context", {})})
+
+
+@api_agent_bp.route("/message/stream", methods=["POST"])
+def api_agent_message_stream():
+    llm = g.get_agent_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "未配置 DeepSeek API Key"}), 500
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"ok": False, "error": "缺少请求数据"}), 400
+
+    user_message = (data.get("message") or "").strip()
+    state_dict = data.get("state")
+    if not user_message:
+        return jsonify({"ok": False, "error": "消息不能为空"}), 400
+    if not state_dict:
+        return jsonify({"ok": False, "error": "缺少 state"}), 400
+
+    agent = get_or_create_agent(
+        llm=llm, exp_repo=g.exp_repo, state_dict=state_dict,
+        thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+        favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo,
+        analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc,
+    )
+
+    def generate():
+        for event in agent.run_stream(user_message):
+            # 检查是否是 final done 事件
+            if event.get("event") == "done":
+                preview = agent._generated_preview
+                if preview is not None:
+                    notes = agent._generated_notes or ""
+                    preview["id"] = g.exp_repo.next_id()
+                    refs = g.experiment_svc.extract_references(notes)
+                    preview["references"] = refs
+                    g.exp_repo.save(preview)
+                    g.experiment_svc.update_referenced_by(preview["id"], refs)
+                    g.experiment_svc.move_draft_images(preview["id"])
+                    event["exp_id"] = preview["id"]
+                    event["type"] = "saved"
+                    agent._generated_preview = None
+                event["state"] = agent.state_to_dict()
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @api_agent_bp.route("/confirm", methods=["POST"])
