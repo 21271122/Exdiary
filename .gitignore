@@ -1,5 +1,15 @@
 .env
-experiments/
-__pycache__/
 *.pyc
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 .claude/
+
+# Runtime data — internal directories (runtime artifacts, not source)
+experiments/_logs/
+experiments/_threads/
+experiments/_debug/
+experiments/_update_logs/
+experiments/_analysis_history/
+config.yaml
