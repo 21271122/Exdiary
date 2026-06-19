@@ -1,8 +1,8 @@
-/* Shared component styles */
-<style>
 /* ============================================================
-   _selector_styles.html — De Stijl selector card styles
+   components.css — Shared component styles (selector, edit, etc.)
    ============================================================ */
+
+/* ---- Selector Cards (from _selector_styles.html) ---- */
 
 .sel-card {
   border: 3px solid var(--black); overflow: hidden; background: var(--white); margin: 0.5rem 0;
@@ -108,6 +108,29 @@
 }
 .analysis-summary-card .asc-link { font-size: 0.75rem; font-weight: 700; color: var(--black); text-decoration: none; text-transform: uppercase; }
 
+/* ---- Experiment Detail Edit (from view.html inline) ---- */
+
+.editable-dashed {
+  display: inline-block; padding: 2px 6px; cursor: pointer; position: relative; overflow: visible;
+  border: 2px dashed var(--black);
+}
+.editable-dashed:hover { background: var(--off-white); }
+.editable-dashed.block { display: block; width: 100%; padding: 0.5rem; }
+.dash-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+
+@keyframes tag-jitter {
+  0%,100%{transform:translate(0,0)rotate(0deg)}
+  25%{transform:translate(-0.25px,0.2px)rotate(-0.1deg)}
+  50%{transform:translate(0.2px,-0.25px)rotate(0.1deg)}
+  75%{transform:translate(0.25px,0.15px)rotate(-0.06deg)}
+}
+.tag-pill.tag-jitter { animation: tag-jitter 0.25s ease-in-out infinite; }
+
+button.row-del { color: var(--red) !important; border-color: var(--red) !important; }
+button.row-del:hover { background: var(--red) !important; color: var(--white) !important; }
+
+/* ---- Responsive ---- */
+
 @media (max-width: 480px) {
   .sel-item { padding: 0.4rem 0.6rem; gap: 0.3rem; }
   .sel-item .sel-check { width: 18px; height: 18px; }
@@ -117,4 +140,3 @@
   .sel-topbar, .sel-bottombar { padding: 0.4rem 0.6rem; }
   .sel-modal { width: 95vw; max-height: 90vh; }
 }
-</style>

@@ -2,8 +2,22 @@ import json
 from datetime import datetime as dt
 from flask import Blueprint, request, jsonify, g
 from lib.agent_v2 import AgentLoop
+from lib.agent_factory import (
+    get_or_create_agent,
+    build_child_for_thread,
+    build_analysis_child,
+    build_legacy_child,
+)
 
 api_child_bp = Blueprint("api_child", __name__)
+
+_MODIFY_MODE_PROMPT = (
+    "[修改模式] 你正在修改已完成的实验 {exp_id}。"
+    "修改前先用 load_reference 加载磁盘最新数据（不要依赖对话记忆）。"
+    "修改用 modify_experiment 工具直接执行，会自动保存和记录日志。"
+    "不要用 update_schema 或 generate_record。"
+    "查询信息用 query_experiment，查历史用 read_update_log。"
+)
 
 
 def _migrate_legacy_analysis(anal_id, analysis_data):
@@ -49,27 +63,6 @@ def _make_chat_response(agent, result, thread_id):
                     "message": result.get("message", "")})
 
 
-def _create_analysis_child_agent(llm_client, thread, anal_id):
-    agent = AgentLoop(llm_client, g.exp_repo,
-                      thread_store=g.thread_repo,
-                      update_log_store=g.update_log_repo,
-                      favorites_store=g.favorites_repo,
-                      analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
-    for m in thread.get("messages", []):
-        if m.get("role") != "system" or "[全局上下文]" not in (m.get("content") or ""):
-            agent.history.append(dict(m))
-    agent.child.agent_role = "analysis_reviewer"
-    agent.child.exp_id = anal_id
-    agent.child.initial_history_len = len(agent.history)
-    agent.thread.id = thread.get("id")
-    agent.history.append({
-        "role": "system",
-        "content": ("[系统状态] 你正在审阅/修改一份已完成的分析报告。"
-                    "可用工具：load_reference（查看报告中引用的实验）、search_experiments、"
-                    "read_update_log、modify_analysis（修改报告内容）。"
-                    "修改报告时直接调用 modify_analysis 工具，会自动保存。")
-    })
-    return agent
 
 
 @api_child_bp.route("/analysis/<anal_id>/chat", methods=["POST"])
@@ -105,11 +98,11 @@ def api_analysis_chat(anal_id):
             state_dict = disk_state
 
     if state_dict:
-        agent = AgentLoop.from_dict(llm, g.exp_repo, state_dict,
-                                    thread_store=g.thread_repo,
-                                    update_log_store=g.update_log_repo,
-                                    favorites_store=g.favorites_repo,
-                                    analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
+        agent = get_or_create_agent(
+            llm=llm, exp_repo=g.exp_repo, state_dict=state_dict,
+            thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+            favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo,
+            analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
         if user_message:
             result = agent.run(user_message)
             return _make_analysis_chat_response(agent, result, thread_id)
@@ -121,7 +114,10 @@ def api_analysis_chat(anal_id):
     if not thread:
         return jsonify({"ok": False, "error": "线程不存在"}), 500
 
-    agent = _create_analysis_child_agent(llm, thread, anal_id)
+    agent = build_analysis_child(llm, g.exp_repo, thread, anal_id,
+            thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+            favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo,
+            analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
     if user_message:
         result = agent.run(user_message)
         return _make_analysis_chat_response(agent, result, thread_id)
@@ -151,11 +147,11 @@ def api_exp_chat(exp_id):
 
         disk_state = g.thread_repo.load_child_state(exp_id)
         if disk_state and not is_legacy:
-            agent = AgentLoop.from_dict(llm, g.exp_repo, disk_state,
-                                        thread_store=g.thread_repo,
-                                        update_log_store=g.update_log_repo,
-                                        favorites_store=g.favorites_repo,
-                                        analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
+            agent = get_or_create_agent(
+                llm=llm, exp_repo=g.exp_repo, state_dict=disk_state,
+                thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+                favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo,
+                analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
             if user_message:
                 result = agent.run(user_message)
                 return _make_chat_response(agent, result, None)
@@ -189,15 +185,14 @@ def api_exp_chat(exp_id):
                     "status": exp.get("status", "done"),
                     "date": exp.get("date", ""),
                     "experimenter": exp.get("experimenter", "")}
-        agent = AgentLoop.create_legacy_child_agent(llm, g.exp_repo, exp_data,
-                                                    thread_store=g.thread_repo,
-                                                    update_log_store=g.update_log_repo,
-                                                    favorites_store=g.favorites_repo,
-                                                    analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
+        agent = build_legacy_child(
+            llm, g.exp_repo, exp_data,
+            thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+            favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo)
         agent.child.exp_id = exp_id
         agent.history.append({
             "role": "system",
-            "content": f"[修改模式] 你正在修改已完成的实验 {exp_id}。修改前先用 load_reference 加载磁盘最新数据（不要依赖对话记忆）。修改用 modify_experiment 工具直接执行，会自动保存和记录日志。不要用 update_schema 或 generate_record。查询信息用 query_experiment，查历史用 read_update_log。"
+            "content": _MODIFY_MODE_PROMPT.format(exp_id=exp_id),
         })
         result = agent.run(user_message)
         return _make_chat_response(agent, result, thread_id)
@@ -208,11 +203,11 @@ def api_exp_chat(exp_id):
             state_dict = disk_state
 
     if state_dict:
-        agent = AgentLoop.from_dict(llm, g.exp_repo, state_dict,
-                                    thread_store=g.thread_repo,
-                                    update_log_store=g.update_log_repo,
-                                    favorites_store=g.favorites_repo,
-                                    analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
+        agent = get_or_create_agent(
+            llm=llm, exp_repo=g.exp_repo, state_dict=state_dict,
+            thread_repo=g.thread_repo, update_log_repo=g.update_log_repo,
+            favorites_repo=g.favorites_repo, analysis_repo=g.analysis_repo,
+            analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
         if user_message:
             result = agent.run(user_message)
             return _make_chat_response(agent, result, thread_id)
@@ -226,7 +221,7 @@ def api_exp_chat(exp_id):
                        update_log_store=g.update_log_repo,
                        favorites_store=g.favorites_repo,
                        analysis_store=g.analysis_repo, analysis_svc=g.analysis_svc, extraction_svc=g.extraction_svc)
-    agent = AgentLoop.create_child_agent(parent, thread_id)
+    agent = build_child_for_thread(parent, thread_id, "exp_editor")
     agent.child.exp_id = exp_id
     agent.history.append({
         "role": "system",

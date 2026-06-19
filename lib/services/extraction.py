@@ -1,15 +1,18 @@
 """自然语言提取服务。吸收 lib/parser.py 的 parse_notes() 和 strip_html()。"""
 
+from __future__ import annotations
+
 import re
 from datetime import datetime
+from typing import Any
 from lib.core.schema import EXPERIMENT_SCHEMA
 
 
 class ExtractionService:
-    def __init__(self, extract_llm):
+    def __init__(self, extract_llm: Any):
         self.extract_llm = extract_llm
 
-    def parse_notes(self, notes: str) -> dict:
+    def parse_notes(self, notes: str) -> dict[str, Any]:
         """自然语言 → 结构化 dict。"""
         user_prompt = f"""Extract the following experiment notes into a structured record:
 
@@ -21,9 +24,9 @@ If the notes are in Chinese, extract in Chinese but keep section keys in English
 If the notes mention experiment IDs or dates, preserve them exactly.
 If the notes mention file paths or sample IDs, preserve them exactly.
 """
-        result = self.extract_llm.structured_extract(
+        result: dict[str, Any] = self.extract_llm.structured_extract(
             prompt=user_prompt,
-            system_prompt=_EXTRACTION_SYSTEM_PROMPT,
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
             output_schema=EXPERIMENT_SCHEMA
         )
         if not result.get("date"):
@@ -41,7 +44,7 @@ If the notes mention file paths or sample IDs, preserve them exactly.
         return text.strip()
 
 
-_EXTRACTION_SYSTEM_PROMPT = """You are an expert materials science research assistant specialized in
+EXTRACTION_SYSTEM_PROMPT = """You are an expert materials science research assistant specialized in
 extracting structured experiment records from free-form laboratory notes.
 
 Your task: Given the user's informal experiment notes, extract all available

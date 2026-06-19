@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="90b6615f-bfc8-4643-b192-634f207cc8df" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.claude/settings.local.json" beforeDir="false" afterPath="$PROJECT_DIR$/.claude/settings.local.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.name" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.name" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/Exdiary.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/AGENT-DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/AGENT-DESIGN_v2.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/ANALYZE-DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/BRANCH-DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/MODE-DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/THREAD-DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/UX-IMPROVEMENTS.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/VISION.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/agent_v2_doc.md" beforeDir="false" afterPath="$PROJECT_DIR$/lib/agent_v2_doc.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/core/experiment_types.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/core/experiment_types.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/core/prompts_doc.md" beforeDir="false" afterPath="$PROJECT_DIR$/lib/core/prompts_doc.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/core/schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/core/schema.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/yaml_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/yaml_analysis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/yaml_experiment.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/yaml_experiment.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/yaml_favorites.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/yaml_favorites.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/yaml_thread.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/yaml_thread.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/repositories/yaml_update_log.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/repositories/yaml_update_log.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/agent.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/analysis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/experiment.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/experiment.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/extraction.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/extraction.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/services/template.py" beforeDir="false" afterPath="$PROJECT_DIR$/lib/services/template.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/storage.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/routes/api_agent_doc.md" beforeDir="false" afterPath="$PROJECT_DIR$/routes/api_agent_doc.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/routes/api_child.py" beforeDir="false" afterPath="$PROJECT_DIR$/routes/api_child.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/css/components.css" beforeDir="false" afterPath="$PROJECT_DIR$/static/css/components.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/templates/_selector_styles.html" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test_agent_v2.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_agent_v2_doc.md" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_agent_v2_doc.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/改动.md" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 3
+}</component>
+  <component name="ProjectId" id="3EehD8ETqueZOYxb4jfuWJaYyTJ" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;
+  }
+}</component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-5a2391486177-d3b881c8e49f-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-233.13763.11" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="90b6615f-bfc8-4643-b192-634f207cc8df" name="Changes" comment="" />
+      <created>1780544821721</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1780544821721</updated>
+    </task>
+    <servers />
+  </component>
+</project>

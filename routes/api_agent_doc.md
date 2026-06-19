@@ -2,7 +2,7 @@
 
 ## 文件作用摘要
 
-父 Agent 对话 API 蓝图 `api_agent_bp`，URL 前缀 `/api/agent`。处理 Agent 对话的启动（`/start`）、消息发送（`/message`）、确认保存（`/confirm`）。前端 fetch JSON 与此 API 交互，实现 SPA 式聊天界面。
+父 Agent 对话 API 蓝图 `api_agent_bp`，URL 前缀 `/api/agent`。处理 Agent 对话的启动（`/start`）、消息发送（`/message` 非流式 + `/message/stream` 流式 SSE）、确认保存（`/confirm`）。前端通过 fetch JSON 或 ReadableStream 消费 SSE 与此 API 交互，实现 SPA 式聊天界面。
 
 ---
 
@@ -22,5 +22,12 @@
   - **返回分两种**:
     1. `type ∈ {extract, generate}`: preview 和 notes 直接来自 Agent 的 `_generated_preview` / `_generated_notes` → `g.exp_repo.save()` 保存 → `g.experiment_svc.update_referenced_by()` → `g.experiment_svc.move_draft_images()` → 返回 `{ok, type: "saved", exp_id, state, message}`
     2. 其他 type: 返回 `{ok, state, type, message, context}`
+
+- `api_agent_message_stream()` — POST `/api/agent/message/stream`: 流式发送用户消息（SSE）
+  - 请求体: `{message: str, state: dict}`（同 `/message`）
+  - `get_or_create_agent(state_dict=state)` → `agent.run_stream(message)` 生成器
+  - 通过 `stream_with_context` 逐事件产出 SSE (`text/event-stream`)
+  - 事件类型: `{"event": "text", "content": "..."}` → `{"event": "tool", "name": "..."}` → `{"event": "tool_done", "name": "..."}` → `{"event": "done", "type": "reply"|"generate", "state": ..., "message": ...}`
+  - done 事件时自动检查 `agent._generated_preview`，有则自动保存实验并返回 `type: "saved"` + `exp_id`
 
 - `api_agent_confirm()` — POST `/api/agent/confirm`: 确认生成实验。直接委托给 `routes/api_experiment.py` 的 `api_parse_confirm()`

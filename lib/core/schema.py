@@ -3,7 +3,9 @@
 纯数据常量，零依赖。
 """
 
-EXPERIMENT_SCHEMA = {
+from typing import Any
+
+EXPERIMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "id": {"type": "string"},
@@ -121,7 +123,7 @@ EXPERIMENT_SCHEMA = {
 }
 
 
-DEFAULT_CONTEXT: dict = {
+DEFAULT_CONTEXT: dict[str, Any] = {
     "title": "",
     "date": "",
     "experimenter": "",
@@ -141,7 +143,7 @@ DEFAULT_CONTEXT: dict = {
 }
 
 
-TAG_VOCABULARY = [
+TAG_VOCABULARY: list[str] = [
     "synthesis", "characterization",
     "photocatalysis", "electrochemistry", "sintering", "ball-milling", "thin-film",
     "XRD", "SEM", "TEM", "mechanical-testing", "thermal-analysis", "DFT",

@@ -40,7 +40,7 @@ class YamlExperimentRepository(AbstractExperimentRepository):
         if not filepath.exists():
             return None
         with open(filepath, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return dict(yaml.safe_load(f) or {})
 
     def list_all(self) -> list[dict]:
         experiments = []

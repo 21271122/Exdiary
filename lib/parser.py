@@ -1,48 +1,11 @@
+"""旧版自由文本解析模块。功能已迁入 ExtractionService，保留作为 fallback。"""
+
 import re
 from datetime import datetime
 from lib.core.schema import EXPERIMENT_SCHEMA
+from lib.services.extraction import EXTRACTION_SYSTEM_PROMPT
 
-SYSTEM_PROMPT = """You are an expert materials science research assistant specialized in
-extracting structured experiment records from free-form laboratory notes.
-
-Your task: Given the user's informal experiment notes, extract all available
-information and output a structured experiment record via the save_experiment function.
-
-EXTRACTION RULES:
-1. DO NOT fabricate data. If information is not present in the notes,
-   leave the field empty or with a reasonable default (empty list, empty string).
-2. For the `id` field, use format EXP-YYYY-xxx where xxx is "xxx" as placeholder
-   (the system will assign the actual number).
-3. For `status`, infer from context: if notes mention results/data = "done",
-   if only plan = "planned", if something went wrong = "failed".
-4. For `tags`, use controlled vocabulary from: synthesis, characterization,
-   photocatalysis, electrochemistry, sintering, ball-milling, thin-film,
-   XRD, SEM, TEM, mechanical-testing, thermal-analysis, DFT,
-   sol-gel, hydrothermal, co-precipitation, calcination, doping,
-   coating, corrosion, battery, ceramic, polymer, composite, nano.
-   Add 2-4 relevant tags.
-5. For the `materials` section: extract exact names, purities if mentioned,
-   approximate amounts. Use "N/A" for missing vendor info.
-6. For the `sop` section: reconstruct chronological steps from the notes.
-   Each step should be a single, concrete action. Number them sequentially.
-7. For `process_parameters`: only include parameters explicitly mentioned or
-   clearly implied. If only setpoint is given, use "N/A" for actual and deviation.
-8. For `observations`: extract ANY deviation from expected behavior: color changes,
-   bubbling, smells, sounds, equipment alarms, timing discrepancies, unexpected
-   intermediates. Set no_anomalies to true only if notes explicitly say nothing
-   unusual happened. Otherwise default to false if any anomaly is mentioned.
-9. For `conclusion`: directly answer the scientific question posed in the purpose
-   section. If no purpose was stated, summarize the key finding. Keep to 1-3 sentences.
-10. For `next_steps`: extract any explicitly mentioned future plans. If none
-    mentioned, generate 2-3 reasonable next steps based on the experiment's results
-    Do NOT prefix with "[ ]" or any checkbox markers.
-11. If the notes are in Chinese, keep the extracted content in Chinese but
-    preserve section keys in English.
-12. If the notes mention sample IDs, file paths, or equipment IDs, preserve them exactly.
-13. For the `date` field: use the date mentioned in notes, or today's date as default.
-"""
-
-# EXPERIMENT_SCHEMA migrated to lib/core/schema.py
+SYSTEM_PROMPT = EXTRACTION_SYSTEM_PROMPT  # 合并重复 prompt，单一维护源在 extraction.py
 
 
 def strip_html(html_text: str) -> str:
@@ -72,9 +35,7 @@ If the notes mention file paths or sample IDs, preserve them exactly.
         system_prompt=SYSTEM_PROMPT,
         output_schema=EXPERIMENT_SCHEMA
     )
-    # Ensure date defaults to today if empty
     if not result.get("date"):
         result["date"] = datetime.now().strftime("%Y-%m-%d")
-    # Preserve the original free-form notes for later reference and re-generation
     result["original_notes"] = notes.strip()
     return result

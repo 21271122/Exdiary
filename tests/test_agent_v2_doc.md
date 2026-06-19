@@ -10,7 +10,7 @@ AgentLoop 单元测试 + 模块级函数测试。覆盖 `merge_context` / `_is_f
 
 ### 导入
 
-- `from lib.agent_v2 import (AgentLoop, merge_context, _is_filled, _brief, _fallback_preview, _tool_log_summary, ChildContext, ThreadState)` — 顶层 import 被测函数和类
+- `from lib.agent_v2 import (AgentLoop, merge_context, _is_filled, _brief, _build_preview, _extract_thread_dialogue, _tool_log_summary, ChildContext, ThreadState)` — 顶层 import 被测函数和类
 - `from lib.core.schema import DEFAULT_CONTEXT` — 测试数据基础模板
 - `from tests.conftest import (MockLLMClient, make_text_response, make_tool_response, make_agent_loop)` — 测试辅助工具
 

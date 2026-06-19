@@ -14,7 +14,21 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); print\\('OK'\\)\")",
       "Bash(grep *)",
       "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); py_compile.compile\\('lib/storage.py', doraise=True\\); print\\('Syntax OK'\\)\")",
-      "Bash(python *)"
+      "Bash(python *)",
+      "WebSearch",
+      "Bash(curl -s http://127.0.0.1:5000/)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(curl -s http://127.0.0.1:5000/experiments)",
+      "Bash(curl -s http://127.0.0.1:5000/timeline)",
+      "Bash(git stash *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5000/static/css/de-stijl.css)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5000/static/js/dashboard.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5000/)",
+      "Bash(wait)",
+      "Bash(git commit *)",
+      "Bash(pip list *)",
+      "Bash(pip install *)",
+      "Bash(git add *)"
     ]
   }
 }

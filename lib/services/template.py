@@ -1,7 +1,10 @@
 """模板管理服务。从 app.py 的 TemplateStore 迁出。"""
 
+from __future__ import annotations
+
 import yaml
 from pathlib import Path
+from typing import Any
 
 
 class TemplateService:
@@ -10,7 +13,7 @@ class TemplateService:
         self.path.mkdir(parents=True, exist_ok=True)
         self._seed_builtin()
 
-    def list_all(self) -> list[dict]:
+    def list_all(self) -> list[dict[str, Any]]:
         templates = []
         for fp in sorted(self.path.glob("*.yaml")):
             try:
@@ -28,14 +31,14 @@ class TemplateService:
                 continue
         return templates
 
-    def load(self, template_id: str) -> dict | None:
+    def load(self, template_id: str) -> dict[str, Any] | None:
         fp = self.path / f"{template_id}.yaml"
         if not fp.exists():
             return None
         with open(fp, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return dict(yaml.safe_load(f))
 
-    def _seed_builtin(self):
+    def _seed_builtin(self) -> None:
         if list(self.path.glob("*.yaml")):
             return
         for tmpl in _BUILTIN_TEMPLATES:

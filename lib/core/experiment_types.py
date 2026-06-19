@@ -1,5 +1,7 @@
 """实验类型配置。从 agent.py 迁出，供 prompts.py 动态生成优先级清单。"""
 
+from typing import Any
+
 PRIORITY_MAP: dict[str, dict[str, list[str]]] = {
     "photocatalysis": {
         "priority_1": [

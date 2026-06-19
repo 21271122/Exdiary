@@ -2,6 +2,7 @@ import yaml
 import re
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 from lib.repositories.base import (
     AbstractExperimentRepository, AbstractAnalysisRepository,
     AbstractThreadRepository, AbstractFavoritesRepository,
@@ -21,11 +22,11 @@ class YamlUpdateLogRepository(AbstractUpdateLogRepository):
     def _filepath(self, exp_id: str) -> Path:
         return self.path / f"{exp_id}.yaml"
 
-    def _load(self, exp_id: str) -> dict:
+    def _load(self, exp_id: str) -> dict[str, Any]:
         fp = self._filepath(exp_id)
         if fp.exists():
             with open(fp, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+                return dict(yaml.safe_load(f) or {})
         return {}
 
     def _save(self, exp_id: str, data: dict) -> None:
@@ -70,17 +71,20 @@ class YamlUpdateLogRepository(AbstractUpdateLogRepository):
         }
         data["entries"].insert(0, entry)
         self._save(exp_id, data)
-        return entry["id"]
+        result: str = entry["id"]
+        return result
 
-    def list_recent(self, exp_id: str, limit: int = 5) -> list[dict]:
+    def list_recent(self, exp_id: str, limit: int = 5) -> list[dict[str, Any]]:
         """返回最近 N 条更新条目（按时间倒序）。"""
         data = self._load(exp_id)
-        return data.get("entries", [])[:limit]
+        entries: list[dict[str, Any]] = list(data.get("entries", []))
+        return entries[:limit]
 
-    def list_all(self, exp_id: str) -> list[dict]:
+    def list_all(self, exp_id: str) -> list[dict[str, Any]]:
         """返回全部更新条目（按时间倒序）。"""
         data = self._load(exp_id)
-        return data.get("entries", [])
+        entries: list[dict[str, Any]] = list(data.get("entries", []))
+        return entries
 
     def get_entry(self, exp_id: str, entry_id: str) -> dict | None:
         """获取单条更新条目。"""

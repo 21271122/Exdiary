@@ -1,16 +1,19 @@
 """跨实验分析服务。吸收 lib/analyzer.py 的 analyze_experiments()。"""
 
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any
 from lib.core.prompts import ANALYSIS_SYSTEM_PROMPT
 
 
 class AnalysisService:
-    def __init__(self, exp_repo, analysis_repo, analyze_llm):
+    def __init__(self, exp_repo: Any, analysis_repo: Any, analyze_llm: Any):
         self.exp_repo = exp_repo
         self.analysis_repo = analysis_repo
         self.analyze_llm = analyze_llm
 
-    def run_analysis(self, query: str, refs: list[str]) -> dict:
+    def run_analysis(self, query: str, refs: list[str]) -> dict[str, Any]:
         """执行分析 → 写 AnalysisStore → 更新实验关联 → 返回报告。"""
         summary = self.exp_repo.summarize_all(exp_ids=refs)
         analysis = self._analyze_experiments(summary, query)
@@ -48,4 +51,4 @@ sections that don't apply.
 
 Structure your response in exactly three sections as specified in the
 system prompt: 事实呈现, 发现提示, 值得思考的问题."""
-        return self.analyze_llm.analyze(ANALYSIS_SYSTEM_PROMPT, user_prompt)
+        return str(self.analyze_llm.analyze(ANALYSIS_SYSTEM_PROMPT, user_prompt))

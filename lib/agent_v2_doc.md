@@ -2,7 +2,7 @@
 
 ## 文件作用摘要
 
-Exdiary Agent 核心引擎（~1902 行）。基于 OpenAI Tool Calling 的对话式实验记录系统。LLM 自主决策流程，Python 仅执行工具和注入 Schema 状态。包含四大类（AgentLoop / ToolExecutor / ChildContext / ThreadState）+ 7 个模块级辅助函数。被 `lib/agent_factory.py`、`routes/api_agent.py`、`routes/api_child.py` 导入使用。
+Exdiary Agent 核心引擎（~2176 行）。基于 OpenAI Tool Calling 的对话式实验记录系统。LLM 自主决策流程，Python 仅执行工具和注入 Schema 状态。包含四大类（AgentLoop / ToolExecutor / ChildContext / ThreadState）+ 7 个模块级辅助函数，支持流式（`run_stream`）和非流式（`run`）两种对话模式。被 `lib/agent_factory.py`、`routes/api_agent.py`、`routes/api_child.py` 导入使用。
 
 ---
 
@@ -105,13 +105,14 @@ Exdiary Agent 核心引擎（~1902 行）。基于 OpenAI Tool Calling 的对话
 
 **构造参数**: `llm_client, experiment_store, *, tool_executor=None, debug_dir=None, thread_store=None, update_log_store=None, favorites_store=None, analysis_store=None, analysis_svc=None, extraction_svc=None`
 
-**构造行为** (line 974-1027):
+**构造行为** (line 1048-1089):
 1. 设置 `self.llm` / `self.store` / `self.history=[]` / `self.references=[]` 等核心属性
 2. 若未提供 tool_executor → 自动创建 `ToolExecutor(experiment_store, ...)`
-3. 初始化 `self.thread = ThreadState()` / `self.child = ChildContext()`
-4. 如果有 thread_store → `thread_store.build_global_summary()` → 注入 L0 摘要到 `self.history[0]`
-5. 创建 debug_dir（默认 `experiments/_debug/{timestamp}/`）
-6. 调用 `_cleanup_old_debug_dirs()` 清理旧目录
+3. 生成 `session_id`（时间戳格式），创建冷存储路径 `_history/{session_id}.jsonl`
+4. 初始化 `self.thread = ThreadState()` / `self.child = ChildContext()`
+5. 如果有 thread_store → `thread_store.build_global_summary()` → 注入 L0 摘要到 `self.history[0]`
+6. 创建 debug_dir（默认 `experiments/_debug/{timestamp}/`）
+7. 调用 `_cleanup_old_debug_dirs()` 清理旧目录
 
 **被实例化**: `lib/agent_factory.py` 的 `get_or_create_agent()` (新建路径)、`build_analysis_child()`、`routes/api_child.py:219` (直接构造 parent Agent 用于 create_child_agent)
 
@@ -127,7 +128,13 @@ Exdiary Agent 核心引擎（~1902 行）。基于 OpenAI Tool Calling 的对话
     - **tool_calls**: 逐个执行 → 错误计数(连续3次→停止) → pause 检查 → 返回或继续循环
   - **LLM 异常兜底**: history 回退到最近 user 消息 + 清理残留 + 重算 turn_count
   - **无进展自动取消**: `_check_thread_cancellation()` 连续 3 轮无 update_schema/analyze → 取消线程
-  - **被调用**: `routes/api_agent.py:20,50` (start/message), `routes/api_child.py:107,122,156,197,232` (子Agent对话)
+  - **被调用**: `routes/api_agent.py:20` (start), `routes/api_child.py:107,122,156,197,232` (子Agent对话)
+
+- `run_stream(user_message: str = "") -> Generator[dict, None, None]`: **流式主循环入口**
+  - 逻辑与 `run()` 相同，但通过 Generator yield SSE 事件实现流式输出
+  - 使用 `self.llm.chat_stream()` 替代 `self.llm.chat()`
+  - 产出事件: `{"event": "text", "content": "..."}` (逐 token) → `{"event": "tool", "name": "..."}` (工具调用) → `{"event": "tool_done", "name": "..."}` (工具完成) → `{"event": "done", "type": "reply"|"generate", ...}` (本轮结束)
+  - **被调用**: `routes/api_agent.py` SSE 端点 (`/api/agent/message/stream`)
 
 - `_build_schema_status() -> str` (line 1294): 生成 "已填 N/16 字段" + 具体列表 + 缺失提示
 - `_core_fields_filled() -> bool` (line 1401): 按 8 种类型的 CORE_BY_TYPE 检查核心字段
@@ -170,11 +177,11 @@ Exdiary Agent 核心引擎（~1902 行）。基于 OpenAI Tool Calling 的对话
 
 - `_save_runtime_state()` (line 1732): 每轮结束实时保存。父 Agent → `save_current_state()`；子 Agent → `save_child_state()`；父 Agent 触发 `_maybe_summarize()`
   - **被调用**: `run()` 中全部 return/pause 路径 (lines 1150, 1173, 1242, 1265, 1273)
-- `state_to_dict() -> dict` (line 1832): 完整序列化（19 个字段含 context/history/thread/child/modified_values/summary 相关）
-- `from_dict(llm_client, store, data, ...) -> AgentLoop` (classmethod, line 1858): 从 dict 恢复。验证磁盘线程是否仍活跃；L0 过期自动刷新；向后兼容旧的空 context（按 None 处理）
+- `state_to_dict() -> dict` (line 1832): 完整序列化（含 context/history/thread/child/modified_values/session_id/summary 相关）
+- `from_dict(llm_client, store, data, ...) -> AgentLoop` (classmethod, line 1858): 从 dict 恢复。验证磁盘线程是否仍活跃；恢复 session_id 和冷存储路径；L0 过期自动刷新；向后兼容旧的空 context（按 None 处理）
   - **被调用**: `lib/agent_factory.py:22,33` — `get_or_create_agent()` 的步骤 1 和 2
 
 #### 上下文窗口管理
 
 - `_estimate_tokens(text: str) -> int` (staticmethod, line 1753): 基于 Unicode 范围估算。CJK≈1.2, ASCII≈0.25, other≈0.8
-- `_maybe_summarize()` (line 1776): 新增 > 300K token → LLM 压缩旧消息；保留最近 100K token；失败回退确定性摘要（保留 system 标记 + tool 状态）；追加到已有摘要后面
+- `_maybe_summarize()` (line 1871): 新增 > 300K token → LLM 压缩旧消息；保留最近 100K token；压缩成功后将旧消息写入冷存储 `_history/{session_id}.jsonl` + 裁剪 `self.history` + 追加摘要到 `_global_context.yaml`；LLM 压缩失败则 return（不裁剪，不写冷存储，下次重试）

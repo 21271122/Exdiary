@@ -2,6 +2,7 @@ import yaml
 import re
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 from lib.repositories.base import (
     AbstractExperimentRepository, AbstractAnalysisRepository,
     AbstractThreadRepository, AbstractFavoritesRepository,
@@ -15,14 +16,14 @@ class YamlFavoritesRepository(AbstractFavoritesRepository):
     def __init__(self, path: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._data = None
+        self._data: dict[str, Any] | None = None
 
-    def _load(self) -> dict:
+    def _load(self) -> dict[str, Any]:
         if self._data is not None:
             return self._data
         if self.path.exists():
             with open(self.path, "r", encoding="utf-8") as f:
-                self._data = yaml.safe_load(f) or {}
+                self._data = dict(yaml.safe_load(f) or {})
         else:
             self._data = {}
         if "pinned" not in self._data:
@@ -31,7 +32,7 @@ class YamlFavoritesRepository(AbstractFavoritesRepository):
             self._data["collections"] = {"默认收藏夹": []}
         return self._data
 
-    def _save(self):
+    def _save(self) -> None:
         if self._data is None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)

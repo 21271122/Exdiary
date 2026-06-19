@@ -1,13 +1,22 @@
 """实验 CRUD + 引用管理 + 更新日志服务。从 app.py 私有函数迁出。"""
 
+from __future__ import annotations
+
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 import json as _json
 
 
 class ExperimentService:
-    def __init__(self, exp_repo, update_log_repo, favorites_repo, base_dir: Path | None = None):
+    def __init__(
+        self,
+        exp_repo: Any,
+        update_log_repo: Any,
+        favorites_repo: Any,
+        base_dir: Path | None = None,
+    ):
         self.exp_repo = exp_repo
         self.update_log_repo = update_log_repo
         self.favorites_repo = favorites_repo
@@ -15,7 +24,13 @@ class ExperimentService:
 
     # -- 公共 API --
 
-    def save_with_log(self, exp_id, data, source, thread_id=None):
+    def save_with_log(
+        self,
+        exp_id: str,
+        data: dict[str, Any],
+        source: str,
+        thread_id: str | None = None,
+    ) -> None:
         """保存实验 + 自动计算 diff + 写更新日志。
         自动判断新建（调 save()）还是修改（调 update()）。"""
         old = self.exp_repo.load(exp_id)
@@ -27,11 +42,13 @@ class ExperimentService:
             return
         diff = self._compute_diff(old, data)
         if diff:
-            self.update_log_repo.append(exp_id, source, diff,
-                                        context={"summary": f"修改了 {len(diff)} 个字段"},
-                                        thread_id=thread_id)
+            self.update_log_repo.append(
+                exp_id, source, diff,
+                context={"summary": f"修改了 {len(diff)} 个字段"},
+                thread_id=thread_id,
+            )
 
-    def delete_with_log(self, exp_id):
+    def delete_with_log(self, exp_id: str) -> None:
         """删除实验 + 写系统日志"""
         self.update_log_repo.append(
             exp_id=exp_id, source="system",
@@ -43,8 +60,8 @@ class ExperimentService:
     def extract_references(self, text: str) -> list[str]:
         """从文本提取 @EXP-xxx 引用（正则匹配，确定性，不调 LLM）。"""
         pattern = r"@(EXP-\d{4}-\d{3})"
-        seen = set()
-        refs = []
+        seen: set[str] = set()
+        refs: list[str] = []
         for m in re.finditer(pattern, text):
             rid = m.group(1)
             if rid not in seen:
@@ -52,12 +69,17 @@ class ExperimentService:
                 refs.append(rid)
         return refs
 
-    def update_referenced_by(self, exp_id, refs, old_refs=None):
+    def update_referenced_by(
+        self,
+        exp_id: str,
+        refs: list[str],
+        old_refs: list[str] | None = None,
+    ) -> None:
         """维护双向引用关系。"""
         for ref_id in refs:
             ref_exp = self.exp_repo.load(ref_id)
             if ref_exp:
-                rb = ref_exp.get("referenced_by", [])
+                rb: list[str] = ref_exp.get("referenced_by", [])
                 if exp_id not in rb:
                     rb.append(exp_id)
                     ref_exp["referenced_by"] = rb
@@ -73,7 +95,14 @@ class ExperimentService:
                         r_exp["referenced_by"] = rb
                         self.exp_repo.save(r_exp)
 
-    def save_and_update_refs(self, exp_id, data, source, old_refs=None, thread_id=None):
+    def save_and_update_refs(
+        self,
+        exp_id: str,
+        data: dict[str, Any],
+        source: str,
+        old_refs: list[str] | None = None,
+        thread_id: str | None = None,
+    ) -> None:
         """保存实验 + 自动处理引用关系。大多数路由直接调此方法即可。"""
         text = data.get("original_notes", "")
         refs = self.extract_references(text)
@@ -81,7 +110,7 @@ class ExperimentService:
         self.save_with_log(exp_id, data, source, thread_id=thread_id)
         self.update_referenced_by(exp_id, refs, old_refs=old_refs)
 
-    def move_draft_images(self, exp_id: str):
+    def move_draft_images(self, exp_id: str) -> None:
         """将 uploads/_draft/ 中的图片迁移到 uploads/<exp_id>/"""
         if not self.base_dir:
             return
@@ -93,12 +122,12 @@ class ExperimentService:
                 shutil.move(str(f), str(exp_img_dir / f.name))
             draft_dir.rmdir()
 
-    def get_pinned_and_others(self):
+    def get_pinned_and_others(self) -> tuple[list[dict[str, Any]], list[str]]:
         """获取置顶 + 其余实验列表"""
         experiments = self.exp_repo.list_all()
         pinned_ids = self.favorites_repo.get_pinned()
-        pinned = []
-        others = []
+        pinned: list[dict[str, Any]] = []
+        others: list[dict[str, Any]] = []
         for exp in experiments:
             if exp["id"] in pinned_ids:
                 pinned.append(exp)
@@ -109,13 +138,13 @@ class ExperimentService:
 
     # -- 私有方法 --
 
-    def _compute_diff(self, old: dict | None, new: dict) -> list[dict]:
+    def _compute_diff(self, old: dict[str, Any] | None, new: dict[str, Any]) -> list[dict[str, Any]]:
         return compute_experiment_diff(old, new)
 
 
-def compute_experiment_diff(old: dict | None, new: dict) -> list[dict]:
+def compute_experiment_diff(old: dict[str, Any] | None, new: dict[str, Any]) -> list[dict[str, Any]]:
     """比较两个实验 dict，返回 [{path, field, old, new}] 差异列表。"""
-    changes = []
+    changes: list[dict[str, Any]] = []
     simple_fields = ["title", "date", "experimenter", "status", "purpose",
                      "conclusion", "original_notes"]
     array_fields = ["tags", "sop", "next_steps"]
